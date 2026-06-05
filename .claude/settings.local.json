@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/pytest *)",
+      "Read(//Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/**)",
+      "Bash(.venv/bin/python3 -c \"import fastapi, apscheduler, websockets; print\\('deps OK'\\)\")",
+      "Bash(sw_vers)",
+      "Bash(xcode-select -p)",
+      "Bash(brew --version)",
+      "Bash(git config *)",
+      "Bash(git init *)",
+      "Bash(git branch *)",
+      "Bash(git add *)"
+    ]
+  }
+}

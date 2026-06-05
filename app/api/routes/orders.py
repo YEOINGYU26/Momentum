@@ -1,0 +1,86 @@
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+from app.core.dependencies import get_orders_api, get_price_monitor
+from app.kis.orders import OrdersAPI
+from app.services.price_monitor import PriceAlert, PriceMonitorService
+
+router = APIRouter(prefix="/orders", tags=["orders"])
+
+
+class OrderRequest(BaseModel):
+    ticker: str = Field(..., examples=["005930"])
+    quantity: int = Field(..., gt=0)
+    price: int = Field(..., gt=0)
+
+
+class MarketOrderRequest(BaseModel):
+    ticker: str = Field(..., examples=["005930"])
+    quantity: int = Field(..., gt=0)
+
+
+class AlertRequest(BaseModel):
+    ticker: str = Field(..., examples=["005930"])
+    target_price: int = Field(..., gt=0)
+    side: str = Field(..., pattern="^(buy|sell)$")
+    quantity: int = Field(..., gt=0)
+
+
+@router.post("/buy/limit")
+async def buy_limit(req: OrderRequest, api: OrdersAPI = Depends(get_orders_api)):
+    return await api.buy_limit(req.ticker, req.quantity, req.price)
+
+
+@router.post("/sell/limit")
+async def sell_limit(req: OrderRequest, api: OrdersAPI = Depends(get_orders_api)):
+    return await api.sell_limit(req.ticker, req.quantity, req.price)
+
+
+@router.post("/buy/market")
+async def buy_market(req: MarketOrderRequest, api: OrdersAPI = Depends(get_orders_api)):
+    return await api.buy_market(req.ticker, req.quantity)
+
+
+@router.post("/sell/market")
+async def sell_market(req: MarketOrderRequest, api: OrdersAPI = Depends(get_orders_api)):
+    return await api.sell_market(req.ticker, req.quantity)
+
+
+@router.post("/alerts")
+async def create_alert(
+    req: AlertRequest,
+    monitor: PriceMonitorService = Depends(get_price_monitor),
+):
+    alert = PriceAlert(
+        ticker=req.ticker,
+        target_price=req.target_price,
+        side=req.side,
+        quantity=req.quantity,
+    )
+    monitor.add_alert(alert)
+    return {"status": "registered", "alert": req.model_dump()}
+
+
+@router.get("/alerts")
+async def list_alerts(monitor: PriceMonitorService = Depends(get_price_monitor)):
+    return [
+        {
+            "ticker": a.ticker,
+            "target_price": a.target_price,
+            "side": a.side,
+            "quantity": a.quantity,
+            "triggered": a.triggered,
+        }
+        for a in monitor.list_alerts()
+    ]
+
+
+@router.delete("/alerts/{ticker}")
+async def delete_alerts(
+    ticker: str,
+    monitor: PriceMonitorService = Depends(get_price_monitor),
+):
+    removed = monitor.remove_alert(ticker)
+    if removed == 0:
+        raise HTTPException(status_code=404, detail="해당 종목 알림 없음")
+    return {"removed": removed}
