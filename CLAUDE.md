@@ -4,6 +4,7 @@
 - 작업 완료 시 항상 Git 커밋할 것
 - 커밋 메시지는 한국어로 작성
 - Jira 이슈 번호 포함할 것 (예: KAN-1)
+- Jira 이슈 생성/수정 시 description은 반드시 `contentFormat: "adf"` + ADF JSON 구조로 작성 (markdown 포맷은 \n이 이중 이스케이프되어 글자 그대로 노출됨)
 
 ## 프로젝트 목표
 한국투자증권(KIS) OpenAPI 기반 자동매매 봇.
@@ -16,7 +17,7 @@
 - **OS**: macOS (Apple Silicon M 시리즈)
 - **IDE**: IntelliJ IDEA (Flutter 플러그인 설치됨)
 - **Python**: 3.9, 가상환경 `.venv/`
-- **Flutter**: 3.44.1 설치됨, Xcode 미설치 (macOS 업데이트 후 설치 예정)
+- **Flutter**: 3.44.1 설치됨, Xcode 26.5 설치됨
 - **서버 실행**: `.venv/bin/uvicorn app.main:app --reload`
 
 ## 현재 진행 상태
@@ -27,13 +28,15 @@
 - [x] 3단계: APScheduler 전략 자동 실행
 - [x] 4단계: Flutter 모바일 앱 초기 구조 (home/balance/orders/jobs 화면)
 - [x] Firebase FCM 푸시 알림 백엔드 (telegram.py 제거, push.py 추가)
+- [x] Google/Apple 로그인 화면 구현 (AuthProvider, LoginScreen, Firebase Auth 연동)
+- [x] Firebase 프로젝트 설정 (momentum-6ec82, Bundle ID: com.momentumtrade.momentum)
+- [x] macOS 빌드 환경 구성 (entitlements, URL scheme, DEVELOPMENT_TEAM)
+- [x] 로그인 화면 macOS에서 UI 정상 확인
 
-### 진행 중
-- [ ] Google 로그인 + Apple 로그인 (firebase_auth, google_sign_in, sign_in_with_apple)
-
-### 진행 예정
-- [ ] 5단계: Flutter UI 완성 (Figma 디자인 연동)
-- [ ] 6단계: 클라우드 배포 (24/7 운영)
+### 다음에 이어서 할 일
+- [ ] KAN-10: iOS 실기기 Google/Apple 로그인 실제 동작 테스트 (USB 케이블 필요)
+- [ ] KAN-11: Flutter UI 완성 (Figma 디자인 연동, Figma MCP 한도 풀리면)
+- [ ] KAN-12: 클라우드 배포 (24/7 운영, 서버 선택 필요)
 
 ## 프로젝트 구조
 
@@ -75,10 +78,13 @@ trading-bot/
 │   ├── designer_agent.py
 │   └── team.py
 ├── mobile/                        # Flutter 앱 (생성됨)
-│   └── lib/
-│       ├── screens/               # home, balance, orders, jobs
-│       ├── providers/             # price, balance, job
-│       └── models/
+│   ├── lib/
+│   │   ├── screens/               # home, balance, orders, jobs, auth/login
+│   │   ├── providers/             # price, balance, job, auth
+│   │   └── models/
+│   ├── ios/Runner/                # GoogleService-Info.plist 포함
+│   ├── macos/Runner/              # GoogleService-Info.plist, entitlements, Info.plist
+│   └── firebase_options.dart      # flutterfire configure 자동 생성
 ├── tests/
 │   ├── test_kis_client.py         # 전략 유닛 테스트
 │   ├── test_ws_client.py          # WebSocket 파싱/콜백 테스트
@@ -162,10 +168,20 @@ FCM_CREDENTIALS_PATH=...        # Firebase 서비스 계정 JSON 경로 (선택)
 
 현재 24개 테스트 전부 통과.
 
-## Flutter 앱 현황 (4단계 진행중)
-- 위치: `mobile/` 디렉토리 (생성됨)
-- 연동: 위 REST API + WebSocket
-- 완성된 화면: home, balance, orders, jobs
-- 진행중: Google 로그인, Apple 로그인 (firebase_auth 미설치)
-- 빌드 환경: Xcode 미설치 (macOS 업데이트 후 설치 예정)
-- 개발 중 테스트: Chrome 브라우저 (`flutter run -d chrome`)
+## Flutter 앱 현황
+
+### 완성된 것
+- 화면: home, balance, orders, jobs, login
+- 로그인: Google/Apple 버튼 UI + AuthProvider + Firebase Auth 연동
+- Firebase 프로젝트: `momentum-6ec82` (yeoingyu26@gmail.com)
+- Bundle ID: `com.momentumtrade.momentum` (iOS/Android/macOS 통일)
+- macOS 로그인 화면 UI 정상 확인 (스크린샷 완료)
+
+### 남은 것
+- iOS 실기기에서 Google/Apple 로그인 실제 동작 테스트 (USB 필요)
+- iOS 시뮬레이터 런타임 미설치 (Xcode 26.5 — 별도 다운로드 필요)
+
+### 빌드 방법
+- macOS: `flutter run -d macos` (로그인 UI 확인용, 실제 로그인은 키체인 제한)
+- iOS 실기기: USB 연결 후 `flutter run` (실제 로그인 동작)
+- Chrome: `flutter run -d chrome`
