@@ -1,11 +1,16 @@
 # KIS 자동매매 시스템 — 프로젝트 컨텍스트
 
+## 규칙
+- 작업 완료 시 항상 Git 커밋할 것
+- 커밋 메시지는 한국어로 작성
+- Jira 이슈 번호 포함할 것 (예: KAN-1)
+
 ## 프로젝트 목표
 한국투자증권(KIS) OpenAPI 기반 자동매매 봇.
 - 지정가 도달 시 자동 매수/매도
 - RSI, 이동평균, 스캘핑 전략 자동 실행
 - Flutter 모바일 앱으로 모니터링 (아이폰)
-- 텔레그램 알림
+- Firebase FCM 푸시 알림 (텔레그램 대체)
 
 ## 개발 환경
 - **OS**: macOS (Apple Silicon M 시리즈)
@@ -20,10 +25,15 @@
 - [x] 1단계: FastAPI 백엔드 + KIS 모의투자 API 연동
 - [x] 2단계: KIS WebSocket 실시간 호가 수신
 - [x] 3단계: APScheduler 전략 자동 실행
+- [x] 4단계: Flutter 모바일 앱 초기 구조 (home/balance/orders/jobs 화면)
+- [x] Firebase FCM 푸시 알림 백엔드 (telegram.py 제거, push.py 추가)
+
+### 진행 중
+- [ ] Google 로그인 + Apple 로그인 (firebase_auth, google_sign_in, sign_in_with_apple)
 
 ### 진행 예정
-- [ ] 4단계: Flutter 모바일 앱 (Xcode 설치 후)
-- [ ] 5단계: 클라우드 배포 (24/7 운영)
+- [ ] 5단계: Flutter UI 완성 (Figma 디자인 연동)
+- [ ] 6단계: 클라우드 배포 (24/7 운영)
 
 ## 프로젝트 구조
 
@@ -50,14 +60,25 @@ trading-bot/
 │   │   ├── price_monitor.py       # 지정가 감시 백그라운드 폴링 (5초 간격)
 │   │   ├── realtime.py            # WebSocket 브로드캐스트 서비스
 │   │   ├── scheduler.py           # APScheduler 전략 자동 실행
-│   │   └── telegram.py            # 텔레그램 알림
+│   │   └── push.py                # Firebase FCM 푸시 알림 (telegram.py 대체)
 │   └── api/routes/
 │       ├── market.py              # GET /api/v1/market/...
 │       ├── account.py             # GET /api/v1/account/...
 │       ├── orders.py              # POST /api/v1/orders/...
 │       ├── strategy.py            # GET /api/v1/strategy/...
 │       ├── scheduler.py           # CRUD /api/v1/scheduler/jobs
+│       ├── devices.py             # POST /api/v1/devices — FCM 토큰 등록
 │       └── ws.py                  # WS /ws/price/{ticker}
+├── agents/                        # 멀티 에이전트 구조 (실험적)
+│   ├── backend_agent.py
+│   ├── frontend_agent.py
+│   ├── designer_agent.py
+│   └── team.py
+├── mobile/                        # Flutter 앱 (생성됨)
+│   └── lib/
+│       ├── screens/               # home, balance, orders, jobs
+│       ├── providers/             # price, balance, job
+│       └── models/
 ├── tests/
 │   ├── test_kis_client.py         # 전략 유닛 테스트
 │   ├── test_ws_client.py          # WebSocket 파싱/콜백 테스트
@@ -126,12 +147,11 @@ trading-bot/
 ```
 KIS_APP_KEY=...
 KIS_APP_SECRET=...
-KIS_ACCOUNT_NO=...          # 계좌번호 앞 8자리
+KIS_ACCOUNT_NO=...              # 계좌번호 앞 8자리
 KIS_ACCOUNT_PRODUCT_CODE=01
-KIS_IS_MOCK=true            # true=모의투자, false=실거래
+KIS_IS_MOCK=true                # true=모의투자, false=실거래
 
-TELEGRAM_BOT_TOKEN=...      # 선택
-TELEGRAM_CHAT_ID=...        # 선택
+FCM_CREDENTIALS_PATH=...        # Firebase 서비스 계정 JSON 경로 (선택)
 ```
 
 ## 테스트 실행
@@ -142,9 +162,10 @@ TELEGRAM_CHAT_ID=...        # 선택
 
 현재 24개 테스트 전부 통과.
 
-## Flutter 앱 계획 (4단계)
-- 위치: `mobile/` 디렉토리 (아직 미생성)
+## Flutter 앱 현황 (4단계 진행중)
+- 위치: `mobile/` 디렉토리 (생성됨)
 - 연동: 위 REST API + WebSocket
-- 주요 화면: 실시간 호가 차트, 잔고, 전략 잡 관리, 주문 내역
-- 빌드 환경: Xcode 필요 (macOS 업데이트 후 설치 예정)
+- 완성된 화면: home, balance, orders, jobs
+- 진행중: Google 로그인, Apple 로그인 (firebase_auth 미설치)
+- 빌드 환경: Xcode 미설치 (macOS 업데이트 후 설치 예정)
 - 개발 중 테스트: Chrome 브라우저 (`flutter run -d chrome`)
