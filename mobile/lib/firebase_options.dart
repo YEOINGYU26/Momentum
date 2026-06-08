@@ -28,10 +28,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.iOS:
         return ios;
       case TargetPlatform.macOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for macos - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return macos;
       case TargetPlatform.windows:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for windows - '
@@ -63,5 +60,13 @@ class DefaultFirebaseOptions {
     projectId: 'momentum-6ec82',
     storageBucket: 'momentum-6ec82.firebasestorage.app',
     iosBundleId: 'com.momentumtrade.momentum',
+  );
+  static const FirebaseOptions macos = FirebaseOptions(
+    apiKey: 'AIzaSyAwEw3MIlCYi4jhlodqMRLan26B4vRjCbo',
+    appId: '1:1019121004935:ios:f7e97929b3c3945b8a6322',
+    messagingSenderId: '1019121004935',
+    projectId: 'momentum-6ec82',
+    storageBucket: 'momentum-6ec82.firebasestorage.app',
+    iosBundleId: 'com.momentumtrade.mobile',
   );
 }

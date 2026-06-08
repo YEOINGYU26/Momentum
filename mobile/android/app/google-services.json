@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "1019121004935",
+    "project_id": "momentum-6ec82",
+    "storage_bucket": "momentum-6ec82.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1019121004935:android:c9b280d6e96087fa8a6322",
+        "android_client_info": {
+          "package_name": "com.momentumtrade.momentum"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBUuA0UC-n6_WS8O0o7dpXkRHexrMGof5M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1019121004935:android:8a9f99da34395e898a6322",
+        "android_client_info": {
+          "package_name": "com.tradingbot.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBUuA0UC-n6_WS8O0o7dpXkRHexrMGof5M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
