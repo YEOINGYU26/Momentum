@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CLIENT_ID</key>
+	<string>1019121004935-g6sheturvjn3ffr2bo8r5gmqtntep88q.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.1019121004935-g6sheturvjn3ffr2bo8r5gmqtntep88q</string>
 	<key>API_KEY</key>
 	<string>AIzaSyAwEw3MIlCYi4jhlodqMRLan26B4vRjCbo</string>
 	<key>GCM_SENDER_ID</key>
@@ -9,7 +13,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.momentumtrade.mobile</string>
+	<string>com.momentumtrade.momentum</string>
 	<key>PROJECT_ID</key>
 	<string>momentum-6ec82</string>
 	<key>STORAGE_BUCKET</key>
@@ -25,6 +29,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:1019121004935:ios:f7e97929b3c3945b8a6322</string>
+	<string>1:1019121004935:ios:b9e2da00f5134dfa8a6322</string>
 </dict>
 </plist>

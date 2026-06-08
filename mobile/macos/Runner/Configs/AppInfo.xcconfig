@@ -8,7 +8,10 @@
 PRODUCT_NAME = mobile
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.momentumtrade.mobile
+PRODUCT_BUNDLE_IDENTIFIER = com.momentumtrade.momentum
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 com.momentumtrade. All rights reserved.
+
+// Development team for code signing
+DEVELOPMENT_TEAM = 3G8ANBCSW4

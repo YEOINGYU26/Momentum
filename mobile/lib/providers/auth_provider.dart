@@ -32,6 +32,12 @@ class AuthProvider extends ChangeNotifier {
         idToken: googleAuth.idToken,
       );
       await _auth.signInWithCredential(credential);
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'keychain-error') {
+        _error = 'macOS 개발 환경에서는 iOS 실기기로 테스트해주세요.';
+      } else {
+        _error = e.message ?? e.toString();
+      }
     } catch (e) {
       _error = e.toString();
     } finally {
