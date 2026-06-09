@@ -18,7 +18,7 @@ class LoginScreen extends StatelessWidget {
         if (snapshot.hasData && snapshot.data != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const MainScaffold()),
+              MaterialPageRoute(builder: (_) => MainScaffold()),
               (_) => false,
             );
           });

@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../core/app_colors.dart';
+import '../../providers/chart_provider.dart';
 
 class ChartScreen extends StatefulWidget {
   const ChartScreen({super.key});
@@ -11,8 +13,9 @@ class ChartScreen extends StatefulWidget {
 
 class _ChartScreenState extends State<ChartScreen> {
   final _searchCtrl = TextEditingController();
-  String _selectedTicker = '005930';
   String _selectedInterval = '1일';
+
+  String get _selectedTicker => context.read<ChartProvider>().ticker;
 
   static const _intervals = ['1분', '5분', '15분', '1시간', '1일', '1주'];
 
@@ -102,7 +105,8 @@ class _ChartScreenState extends State<ChartScreen> {
                 ),
                 onSubmitted: (v) {
                   if (v.trim().isNotEmpty) {
-                    setState(() => _selectedTicker = v.trim().toUpperCase());
+                    context.read<ChartProvider>().setTicker(v.trim().toUpperCase());
+                    setState(() {});
                     _searchCtrl.clear();
                   }
                 },
@@ -126,7 +130,10 @@ class _ChartScreenState extends State<ChartScreen> {
           final t = _quickPicks[i];
           final isSelected = _selectedTicker == t.code;
           return GestureDetector(
-            onTap: () => setState(() => _selectedTicker = t.code),
+            onTap: () {
+              context.read<ChartProvider>().setTicker(t.code);
+              setState(() {});
+            },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               decoration: BoxDecoration(

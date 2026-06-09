@@ -51,7 +51,7 @@ class _SplashScreenState extends State<SplashScreen>
       final user = FirebaseAuth.instance.currentUser;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => user != null ? const MainScaffold() : const LoginScreen(),
+          builder: (_) => user != null ? MainScaffold() : const LoginScreen(),
         ),
       );
     }

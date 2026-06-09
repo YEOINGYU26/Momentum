@@ -8,6 +8,7 @@ import 'providers/auth_provider.dart' as app_auth;
 import 'providers/price_provider.dart';
 import 'providers/balance_provider.dart';
 import 'providers/job_provider.dart';
+import 'providers/chart_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/home/home_screen.dart';
@@ -26,6 +27,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => PriceProvider()),
         ChangeNotifierProvider(create: (_) => BalanceProvider()),
         ChangeNotifierProvider(create: (_) => JobProvider()),
+        ChangeNotifierProvider(create: (_) => ChartProvider()),
       ],
       child: const TradingApp(),
     ),
@@ -61,8 +63,17 @@ class TradingApp extends StatelessWidget {
   }
 }
 
+// ─── MainScaffold ──────────────────────────────────────────────────────────────
+
 class MainScaffold extends StatefulWidget {
-  const MainScaffold({super.key});
+  static final _key = GlobalKey<_MainScaffoldState>();
+
+  MainScaffold({Key? key}) : super(key: key ?? _key);
+
+  /// Switch to the Chart tab (index 1) from anywhere.
+  static void goToChart() {
+    _key.currentState?._goToTab(1);
+  }
 
   @override
   State<MainScaffold> createState() => _MainScaffoldState();
@@ -71,13 +82,7 @@ class MainScaffold extends StatefulWidget {
 class _MainScaffoldState extends State<MainScaffold> {
   int _index = 0;
 
-  static const _screens = [
-    HomeScreen(),
-    ChartScreen(),
-    AutoTradeScreen(),
-    BalanceScreen(),
-    MenuScreen(),
-  ];
+  void _goToTab(int i) => setState(() => _index = i);
 
   @override
   void initState() {
@@ -94,8 +99,16 @@ class _MainScaffoldState extends State<MainScaffold> {
 
   @override
   Widget build(BuildContext context) {
+    final screens = [
+      HomeScreen(onGoToChart: () => _goToTab(1)),
+      const ChartScreen(),
+      const AutoTradeScreen(),
+      const BalanceScreen(),
+      const MenuScreen(),
+    ];
+
     return Scaffold(
-      body: _screens[_index],
+      body: IndexedStack(index: _index, children: screens),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         backgroundColor: AppColors.card,
