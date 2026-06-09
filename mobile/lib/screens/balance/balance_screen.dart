@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/app_colors.dart';
 import '../../providers/balance_provider.dart';
 import '../../models/balance.dart';
 
@@ -22,143 +23,197 @@ class _BalanceScreenState extends State<BalanceScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('잔고'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => context.read<BalanceProvider>().fetchBalance(),
-          ),
+      backgroundColor: AppColors.bg,
+      body: SafeArea(
+        child: Consumer<BalanceProvider>(
+          builder: (context, provider, _) {
+            return RefreshIndicator(
+              onRefresh: provider.fetchBalance,
+              color: AppColors.green,
+              child: CustomScrollView(
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+                    sliver: SliverList(
+                      delegate: SliverChildListDelegate([
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('잔고',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.bold)),
+                            GestureDetector(
+                              onTap: provider.fetchBalance,
+                              child: const Icon(Icons.refresh, color: AppColors.gray, size: 22),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                      ]),
+                    ),
+                  ),
+                  if (provider.loading)
+                    const SliverFillRemaining(
+                      child: Center(child: CircularProgressIndicator(color: AppColors.green)),
+                    )
+                  else if (provider.error != null)
+                    SliverFillRemaining(
+                      child: _ErrorView(
+                          message: provider.error!, onRetry: provider.fetchBalance),
+                    )
+                  else if (provider.balance == null)
+                    const SliverFillRemaining(
+                      child: Center(
+                          child: Text('데이터 없음', style: TextStyle(color: AppColors.gray))),
+                    )
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+                      sliver: SliverList(
+                        delegate: SliverChildListDelegate(
+                          _buildContent(provider.balance!),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildContent(BalanceData balance) {
+    return [
+      _TotalCard(balance: balance),
+      const SizedBox(height: 16),
+      Row(
+        children: [
+          Expanded(child: _StatCard(label: '주식 평가금액', value: '${_fmt(balance.totalEvalAmount)}원')),
+          const SizedBox(width: 12),
+          Expanded(child: _StatCard(label: '예수금', value: '${_fmt(balance.cashBalance)}원')),
         ],
       ),
-      body: Consumer<BalanceProvider>(
-        builder: (context, provider, _) {
-          if (provider.loading) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (provider.error != null) {
-            return _ErrorView(message: provider.error!, onRetry: provider.fetchBalance);
-          }
-          if (provider.balance == null) {
-            return const Center(child: Text('데이터 없음'));
-          }
-          return RefreshIndicator(
-            onRefresh: provider.fetchBalance,
-            child: _BalanceView(balance: provider.balance!),
-          );
-        },
-      ),
-    );
+      const SizedBox(height: 24),
+      const Text('보유 종목',
+          style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
+      const SizedBox(height: 12),
+      if (balance.holdings.isEmpty)
+        Container(
+          height: 80,
+          decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14)),
+          child: const Center(
+              child: Text('보유 종목 없음', style: TextStyle(color: AppColors.gray))),
+        )
+      else
+        ...balance.holdings.map((h) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _HoldingCard(holding: h),
+            )),
+    ];
   }
 }
 
-class _BalanceView extends StatelessWidget {
+class _TotalCard extends StatelessWidget {
   final BalanceData balance;
-  const _BalanceView({required this.balance});
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _SummaryCard(balance: balance),
-        const SizedBox(height: 16),
-        const Text('보유 종목', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        if (balance.holdings.isEmpty)
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Center(child: Text('보유 종목 없음', style: TextStyle(color: Colors.grey))),
-            ),
-          )
-        else
-          ...balance.holdings.map((h) => _HoldingTile(holding: h)),
-      ],
-    );
-  }
-}
-
-class _SummaryCard extends StatelessWidget {
-  final BalanceData balance;
-  const _SummaryCard({required this.balance});
+  const _TotalCard({required this.balance});
 
   @override
   Widget build(BuildContext context) {
     final isProfit = !balance.totalProfitLoss.startsWith('-');
-    final profitColor = isProfit ? Colors.red : Colors.blue;
+    final profitColor = isProfit ? AppColors.green : AppColors.red;
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('총 평가금액', style: TextStyle(color: Colors.grey)),
-            const SizedBox(height: 4),
-            Text(
-              '${_fmt(balance.totalEvalAmount)}원',
-              style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-            ),
-            const Divider(height: 24),
-            _Row(label: '매입금액', value: '${_fmt(balance.totalPurchaseAmount)}원'),
-            _Row(
-              label: '평가손익',
-              value: '${_fmt(balance.totalProfitLoss)}원 (${balance.totalProfitRate}%)',
-              valueColor: profitColor,
-            ),
-            _Row(label: '예수금', value: '${_fmt(balance.cashBalance)}원'),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Row extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color? valueColor;
-  const _Row({required this.label, required this.value, this.valueColor});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(20)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(color: Colors.grey)),
-          Text(value, style: TextStyle(color: valueColor)),
+          const Text('총 자산', style: TextStyle(color: AppColors.gray, fontSize: 12)),
+          const SizedBox(height: 6),
+          Text('${_fmt(balance.totalEvalAmount)}원',
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Text(
+            '${isProfit ? '+' : ''}${_fmt(balance.totalProfitLoss)}원 (${balance.totalProfitRate}%) 평가손익',
+            style: TextStyle(color: profitColor, fontSize: 12),
+          ),
         ],
       ),
     );
   }
 }
 
-class _HoldingTile extends StatelessWidget {
-  final Holding holding;
-  const _HoldingTile({required this.holding});
+class _StatCard extends StatelessWidget {
+  final String label, value;
+  const _StatCard({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
-    final color = holding.isProfit ? Colors.red : Colors.blue;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        title: Text('${holding.name} (${holding.ticker})'),
-        subtitle: Text('${holding.quantity}주 · 평균 ${_fmt(holding.avgPrice)}원'),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text('${_fmt(holding.evalAmount)}원', style: const TextStyle(fontWeight: FontWeight.bold)),
-            Text(
-              '${holding.isProfit ? '+' : ''}${_fmt(holding.profitLoss)}원 (${holding.profitRate}%)',
-              style: TextStyle(fontSize: 12, color: color),
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(color: AppColors.gray, fontSize: 11)),
+          const SizedBox(height: 6),
+          Text(value,
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+}
+
+class _HoldingCard extends StatelessWidget {
+  final Holding holding;
+  const _HoldingCard({required this.holding});
+
+  @override
+  Widget build(BuildContext context) {
+    final profitColor = holding.isProfit ? AppColors.green : AppColors.red;
+    return Container(
+      height: 70,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14)),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(holding.name,
+                    style: const TextStyle(
+                        color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text('${holding.quantity}주 · 평균 ${_fmt(holding.avgPrice)}원',
+                    style: const TextStyle(color: AppColors.gray, fontSize: 11)),
+              ],
             ),
-          ],
-        ),
+          ),
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text('${_fmt(holding.evalAmount)}원',
+                  style: const TextStyle(
+                      color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 2),
+              Text(
+                '${holding.isProfit ? '+' : ''}${_fmt(holding.profitLoss)}원',
+                style: TextStyle(color: profitColor, fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -175,11 +230,18 @@ class _ErrorView extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.error_outline, size: 48, color: Colors.red),
+          const Icon(Icons.error_outline, size: 48, color: AppColors.red),
           const SizedBox(height: 16),
-          Text(message, textAlign: TextAlign.center),
+          Text(message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.gray)),
           const SizedBox(height: 16),
-          ElevatedButton(onPressed: onRetry, child: const Text('다시 시도')),
+          ElevatedButton(
+            onPressed: onRetry,
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.green, foregroundColor: AppColors.bg),
+            child: const Text('다시 시도'),
+          ),
         ],
       ),
     );
@@ -187,8 +249,12 @@ class _ErrorView extends StatelessWidget {
 }
 
 String _fmt(String value) {
-  final n = int.tryParse(value.replaceAll(',', '').replaceAll('-', '').trim());
+  final clean = value.replaceAll(',', '').replaceAll('-', '').trim();
+  final n = int.tryParse(clean);
   if (n == null) return value;
   final prefix = value.startsWith('-') ? '-' : '';
-  return '$prefix${n.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},')}';
+  return '$prefix${n.toString().replaceAllMapped(
+    RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+    (m) => '${m[1]},',
+  )}';
 }

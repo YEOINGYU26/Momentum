@@ -11,9 +11,10 @@ import 'providers/job_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/home/home_screen.dart';
+import 'screens/stocks/stocks_screen.dart';
+import 'screens/auto_trade/auto_trade_screen.dart';
 import 'screens/balance/balance_screen.dart';
-import 'screens/jobs/jobs_screen.dart';
-import 'screens/orders/orders_screen.dart';
+import 'screens/menu/menu_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -72,15 +73,15 @@ class _MainScaffoldState extends State<MainScaffold> {
 
   static const _screens = [
     HomeScreen(),
+    StocksScreen(),
+    AutoTradeScreen(),
     BalanceScreen(),
-    JobsScreen(),
-    OrdersScreen(),
+    MenuScreen(),
   ];
 
   @override
   void initState() {
     super.initState();
-    // Listen for sign-out and navigate to login
     FirebaseAuth.instance.authStateChanges().listen((user) {
       if (user == null && mounted) {
         Navigator.of(context).pushAndRemoveUntil(
@@ -99,23 +100,33 @@ class _MainScaffoldState extends State<MainScaffold> {
         selectedIndex: _index,
         backgroundColor: AppColors.card,
         indicatorColor: AppColors.green.withValues(alpha: 0.15),
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.show_chart),
-            label: '시세',
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home, color: AppColors.green),
+            label: '홈',
           ),
           NavigationDestination(
-            icon: Icon(Icons.account_balance_wallet),
+            icon: Icon(Icons.star_outline),
+            selectedIcon: Icon(Icons.star, color: AppColors.green),
+            label: '종목',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.bolt_outlined),
+            selectedIcon: Icon(Icons.bolt, color: AppColors.green),
+            label: '자동매매',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.account_balance_wallet_outlined),
+            selectedIcon: Icon(Icons.account_balance_wallet, color: AppColors.green),
             label: '잔고',
           ),
           NavigationDestination(
-            icon: Icon(Icons.auto_mode),
-            label: '전략',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.swap_horiz),
-            label: '주문',
+            icon: Icon(Icons.menu),
+            selectedIcon: Icon(Icons.menu, color: AppColors.green),
+            label: '메뉴',
           ),
         ],
       ),

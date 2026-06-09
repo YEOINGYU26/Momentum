@@ -1,219 +1,195 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../../providers/price_provider.dart';
-import '../../providers/auth_provider.dart' as app_auth;
+import '../../core/app_colors.dart';
 
-class HomeScreen extends StatefulWidget {
+class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
-
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen> {
-  final _controller = TextEditingController();
-
-  void _search(PriceProvider provider) {
-    final ticker = _controller.text.trim().toUpperCase();
-    if (ticker.isEmpty) return;
-    provider.connectWs(ticker);
-    provider.fetchPrice(ticker);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('실시간 시세'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: '로그아웃',
-            onPressed: () =>
-                context.read<app_auth.AuthProvider>().signOut(),
+      backgroundColor: AppColors.bg,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 20),
+              _buildHeader(),
+              const SizedBox(height: 20),
+              _buildPortfolioCard(),
+              const SizedBox(height: 24),
+              _SectionHeader(title: "활성 전략", badge: "3개 실행 중", badgeColor: AppColors.green),
+              const SizedBox(height: 12),
+              const _StrategyCard(name: 'RSI 전략',      ticker: '삼성전자', signal: 'BUY',  color: AppColors.green),
+              const SizedBox(height: 10),
+              const _StrategyCard(name: 'MA 골든크로스', ticker: 'AAPL',    signal: 'HOLD', color: AppColors.yellow),
+              const SizedBox(height: 10),
+              const _StrategyCard(name: '볼린저 밴드',   ticker: 'BTC',     signal: 'SELL', color: AppColors.red),
+              const SizedBox(height: 24),
+              const _SectionHeader(title: "최근 알림"),
+              const SizedBox(height: 12),
+              const _AlertCard(icon: '📈', message: '삼성전자 RSI 28.4 — 매수 신호', time: '09:15'),
+              const SizedBox(height: 10),
+              const _AlertCard(icon: '🔔', message: 'AAPL \$178.50 목표가 도달', time: '14:32'),
+              const SizedBox(height: 32),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('안녕하세요 👋',
+            style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+        SizedBox(height: 4),
+        Text('오늘도 성공적인 매매 되세요',
+            style: TextStyle(color: AppColors.gray, fontSize: 13)),
+      ],
+    );
+  }
+
+  Widget _buildPortfolioCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('총 평가금액', style: TextStyle(color: AppColors.gray, fontSize: 12)),
+          const SizedBox(height: 6),
+          const Text('₩ 12,480,000',
+              style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.green.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text('+₩ 248,000  +2.03%',
+                    style: TextStyle(color: AppColors.green, fontSize: 11, fontWeight: FontWeight.w600)),
+              ),
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('예수금', style: TextStyle(color: AppColors.gray, fontSize: 11)),
+                  SizedBox(height: 2),
+                  Text('₩ 4,520,000',
+                      style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ],
           ),
         ],
-      ),
-      body: Consumer<PriceProvider>(
-        builder: (context, provider, _) {
-          return Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _SearchBar(controller: _controller, onSearch: () => _search(provider)),
-                const SizedBox(height: 24),
-                if (provider.loading)
-                  const Center(child: CircularProgressIndicator())
-                else if (provider.error != null)
-                  _ErrorCard(message: provider.error!)
-                else if (provider.price != null)
-                  _PriceCard(provider: provider)
-                else
-                  const _EmptyState(),
-              ],
-            ),
-          );
-        },
       ),
     );
   }
 }
 
-class _SearchBar extends StatelessWidget {
-  final TextEditingController controller;
-  final VoidCallback onSearch;
-
-  const _SearchBar({required this.controller, required this.onSearch});
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final String? badge;
+  final Color? badgeColor;
+  const _SectionHeader({required this.title, this.badge, this.badgeColor});
 
   @override
   Widget build(BuildContext context) {
     return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Expanded(
-          child: TextField(
-            controller: controller,
-            decoration: const InputDecoration(
-              hintText: '종목 코드 입력 (예: 005930)',
-              border: OutlineInputBorder(),
-              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            ),
-            textCapitalization: TextCapitalization.characters,
-            onSubmitted: (_) => onSearch(),
-          ),
-        ),
-        const SizedBox(width: 8),
-        ElevatedButton(
-          onPressed: onSearch,
-          child: const Text('조회'),
-        ),
+        Text(title,
+            style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
+        if (badge != null)
+          Text(badge!, style: TextStyle(color: badgeColor ?? AppColors.gray, fontSize: 12)),
       ],
     );
   }
 }
 
-class _PriceCard extends StatelessWidget {
-  final PriceProvider provider;
-  const _PriceCard({required this.provider});
-
-  @override
-  Widget build(BuildContext context) {
-    final p = provider.price!;
-    final color = p.isUp ? Colors.red : Colors.blue;
-    final sign = p.isUp ? '+' : '';
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(p.ticker, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                _WsStatusChip(connected: provider.isConnected),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Text(
-              '${_fmt(p.price)}원',
-              style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: color),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '$sign${_fmt(p.change)}원  ($sign${p.changeRate}%)',
-              style: TextStyle(fontSize: 16, color: color),
-            ),
-            const Divider(height: 24),
-            Row(
-              children: [
-                const Text('거래량', style: TextStyle(color: Colors.grey)),
-                const SizedBox(width: 8),
-                Text(_fmt(p.volume)),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _fmt(String value) {
-    final n = int.tryParse(value.replaceAll(',', '').replaceAll('-', '').trim());
-    if (n == null) return value;
-    return n.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (m) => '${m[1]},',
-    );
-  }
-}
-
-class _WsStatusChip extends StatelessWidget {
-  final bool connected;
-  const _WsStatusChip({required this.connected});
+class _StrategyCard extends StatelessWidget {
+  final String name, ticker, signal;
+  final Color color;
+  const _StrategyCard({
+    required this.name,
+    required this.ticker,
+    required this.signal,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: connected ? Colors.green.withValues(alpha:0.2) : Colors.grey.withValues(alpha:0.2),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: connected ? Colors.green : Colors.grey),
-      ),
+      height: 60,
+      decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14)),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.circle, size: 8, color: connected ? Colors.green : Colors.grey),
-          const SizedBox(width: 4),
-          Text(connected ? 'LIVE' : 'OFF', style: TextStyle(fontSize: 12, color: connected ? Colors.green : Colors.grey)),
+          Container(
+            width: 4,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: const BorderRadius.horizontal(right: Radius.circular(2)),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name,
+                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(ticker, style: const TextStyle(color: AppColors.gray, fontSize: 11)),
+              ],
+            ),
+          ),
+          Container(
+            margin: const EdgeInsets.only(right: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(signal,
+                style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+          ),
         ],
       ),
     );
   }
 }
 
-class _ErrorCard extends StatelessWidget {
-  final String message;
-  const _ErrorCard({required this.message});
+class _AlertCard extends StatelessWidget {
+  final String icon, message, time;
+  const _AlertCard({required this.icon, required this.message, required this.time});
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: Colors.red.withValues(alpha:0.1),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.red),
-            const SizedBox(width: 8),
-            Expanded(child: Text(message, style: const TextStyle(color: Colors.red))),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Column(
+    return Container(
+      height: 60,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14)),
+      child: Row(
         children: [
-          SizedBox(height: 60),
-          Icon(Icons.search, size: 64, color: Colors.grey),
-          SizedBox(height: 16),
-          Text('종목 코드를 입력해 실시간 시세를 조회하세요', style: TextStyle(color: Colors.grey)),
+          Text(icon, style: const TextStyle(fontSize: 20)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(message, style: const TextStyle(color: Colors.white, fontSize: 12)),
+          ),
+          Text(time, style: const TextStyle(color: AppColors.gray, fontSize: 11)),
         ],
       ),
     );
