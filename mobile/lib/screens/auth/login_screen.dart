@@ -1,41 +1,64 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/app_colors.dart';
 import '../../providers/auth_provider.dart' as app_auth;
+import '../../main.dart';
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Consumer<app_auth.AuthProvider>(
-        builder: (context, auth, _) {
-          return SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 32),
-              child: Column(
-                children: [
-                  const Spacer(flex: 2),
-                  _Logo(),
-                  const Spacer(flex: 2),
-                  if (auth.error != null) _ErrorBanner(message: auth.error!),
-                  if (auth.loading)
-                    const CircularProgressIndicator()
-                  else ...[
-                    _GoogleButton(onTap: auth.signInWithGoogle),
-                    if (!kIsWeb) ...[
-                      const SizedBox(height: 12),
-                      _AppleButton(onTap: auth.signInWithApple),
-                    ],
-                  ],
-                  const Spacer(),
-                ],
-              ),
-            ),
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        // 로그인 성공 시 MainScaffold로 이동
+        if (snapshot.hasData && snapshot.data != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const MainScaffold()),
+              (_) => false,
+            );
+          });
+          return const Scaffold(
+            backgroundColor: AppColors.bg,
+            body: Center(child: CircularProgressIndicator(color: AppColors.green)),
           );
-        },
-      ),
+        }
+
+        return Scaffold(
+          backgroundColor: AppColors.bg,
+          body: Consumer<app_auth.AuthProvider>(
+            builder: (context, auth, _) {
+              return SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: Column(
+                    children: [
+                      const Spacer(flex: 2),
+                      _Logo(),
+                      const Spacer(flex: 2),
+                      if (auth.error != null) _ErrorBanner(message: auth.error!),
+                      if (auth.loading)
+                        const CircularProgressIndicator(color: AppColors.green)
+                      else ...[
+                        _GoogleButton(onTap: auth.signInWithGoogle),
+                        if (!kIsWeb) ...[
+                          const SizedBox(height: 12),
+                          _AppleButton(onTap: auth.signInWithApple),
+                        ],
+                      ],
+                      const Spacer(),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }

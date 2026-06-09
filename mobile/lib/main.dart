@@ -11,7 +11,7 @@ import 'providers/job_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/home/home_screen.dart';
-import 'screens/stocks/stocks_screen.dart';
+import 'screens/chart/chart_screen.dart';
 import 'screens/auto_trade/auto_trade_screen.dart';
 import 'screens/balance/balance_screen.dart';
 import 'screens/menu/menu_screen.dart';
@@ -73,7 +73,7 @@ class _MainScaffoldState extends State<MainScaffold> {
 
   static const _screens = [
     HomeScreen(),
-    StocksScreen(),
+    ChartScreen(),
     AutoTradeScreen(),
     BalanceScreen(),
     MenuScreen(),
@@ -109,9 +109,9 @@ class _MainScaffoldState extends State<MainScaffold> {
             label: '홈',
           ),
           NavigationDestination(
-            icon: Icon(Icons.star_outline),
-            selectedIcon: Icon(Icons.star, color: AppColors.green),
-            label: '종목',
+            icon: Icon(Icons.candlestick_chart_outlined),
+            selectedIcon: Icon(Icons.candlestick_chart, color: AppColors.green),
+            label: '차트',
           ),
           NavigationDestination(
             icon: Icon(Icons.bolt_outlined),
