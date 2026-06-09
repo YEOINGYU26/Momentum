@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import account, market, orders, strategy, ws, scheduler
+from app.api.routes import account, market, orders, strategy, ws, scheduler, devices
 from app.core.config import get_settings
 from app.core.dependencies import get_price_monitor, get_realtime_service, get_scheduler
 
@@ -52,6 +52,7 @@ app.include_router(orders.router, prefix="/api/v1")
 app.include_router(strategy.router, prefix="/api/v1")
 app.include_router(ws.router)  # /ws/* 경로는 prefix 없음
 app.include_router(scheduler.router, prefix="/api/v1")
+app.include_router(devices.router, prefix="/api/v1")
 
 
 @app.get("/health")

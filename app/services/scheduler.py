@@ -19,7 +19,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.kis.market import MarketAPI
 from app.kis.orders import OrdersAPI
-from app.services.telegram import TelegramNotifier
+from app.services.push import PushNotifier
 from app.strategies.base import Signal
 from app.strategies.moving_average import MovingAverageStrategy
 from app.strategies.rsi import RSIStrategy
@@ -61,7 +61,7 @@ class StrategyScheduler:
         self,
         market_api: MarketAPI,
         orders_api: OrdersAPI,
-        notifier: TelegramNotifier,
+        notifier: PushNotifier,
     ):
         self._market = market_api
         self._orders = orders_api
@@ -217,15 +217,17 @@ class StrategyScheduler:
             order_result = await self._orders.buy_market(config.ticker, config.quantity)
             await self._notifier.notify_order("buy", config.ticker, current_price, config.quantity)
             await self._notifier.send(
-                f"📊 <b>[{config.strategy_name.upper()}]</b> {config.ticker}\n"
-                f"신호: 매수 | 이유: {result.reason}"
+                title=f"📊 [{config.strategy_name.upper()}] {config.ticker}",
+                body=f"매수 신호 | {result.reason}",
+                data={"type": "strategy", "ticker": config.ticker, "signal": "buy"},
             )
         elif result.signal == Signal.SELL:
             order_result = await self._orders.sell_market(config.ticker, config.quantity)
             await self._notifier.notify_order("sell", config.ticker, current_price, config.quantity)
             await self._notifier.send(
-                f"📊 <b>[{config.strategy_name.upper()}]</b> {config.ticker}\n"
-                f"신호: 매도 | 이유: {result.reason}"
+                title=f"📊 [{config.strategy_name.upper()}] {config.ticker}",
+                body=f"매도 신호 | {result.reason}",
+                data={"type": "strategy", "ticker": config.ticker, "signal": "sell"},
             )
 
         return ExecutionRecord(

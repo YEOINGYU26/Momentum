@@ -5,7 +5,7 @@ from typing import Optional
 
 from app.kis.market import MarketAPI
 from app.kis.orders import OrdersAPI
-from app.services.telegram import TelegramNotifier
+from app.services.push import PushNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class PriceMonitorService:
         self,
         market_api: MarketAPI,
         orders_api: OrdersAPI,
-        notifier: TelegramNotifier,
+        notifier: PushNotifier,
         interval: float = 5.0,
     ):
         self._market = market_api

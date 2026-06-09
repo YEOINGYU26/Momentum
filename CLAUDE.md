@@ -32,10 +32,27 @@
 - [x] Firebase 프로젝트 설정 (momentum-6ec82, Bundle ID: com.momentumtrade.momentum)
 - [x] macOS 빌드 환경 구성 (entitlements, URL scheme, DEVELOPMENT_TEAM)
 - [x] 로그인 화면 macOS에서 UI 정상 확인
+- [x] Flutter 웹 플랫폼 추가 (Chrome에서 Google 로그인, signInWithPopup)
+- [x] 5탭 하단 네비게이션: 홈 / 차트 / 자동매매 / 잔고 / 메뉴
+- [x] 홈 화면: TradingView 스타일 왓치리스트
+  - 섹션별 그룹 (주가지수/가상화폐/주식), 7개 기본 종목
+  - 왼쪽 스와이프: 알림/순서/삭제 버튼 (flutter_slidable 3.1.2)
+  - 드래그 핸들로 순서 변경 (ReorderableListView)
+  - + 버튼 / 즐겨찾기 추가 → 종목 검색 화면 (StockSearchScreen)
+  - 종목 탭: 미니차트 바텀시트 → "더보기" 아이콘 → 차트 탭 이동
+- [x] 실시간 시세 (MarketDataService):
+  - 암호화폐: Upbit 공개 API (실제 동작 확인)
+  - 한국 주식: KIS 백엔드 (uvicorn 실행 시 동작)
+  - 글로벌 주식: 더미 데이터 (Yahoo Finance CORS 문제)
+- [x] Figma 디자인 업데이트 (TradeBot-UI 파일):
+  - Main/홈/Dark: 왓치리스트 UI로 전면 교체
+  - Main/종목/Dark → Main/차트/Dark: 캔들스틱 차트 화면
+  - 모든 화면 하단 탭바 "종목" → "차트" 수정
+  - 미니차트 바텀시트 화면 추가 (Main/홈/MiniChart Sheet)
 
 ### 다음에 이어서 할 일
 - [ ] KAN-10: iOS 실기기 Google/Apple 로그인 실제 동작 테스트 (USB 케이블 필요)
-- [ ] KAN-11: Flutter UI 완성 (Figma 디자인 연동, Figma MCP 한도 풀리면)
+- [ ] KAN-11: 글로벌 주식 실시간 시세 — Yahoo Finance 프록시 엔드포인트 추가 (`/api/v1/market/price/global/{ticker}`)
 - [ ] KAN-12: 클라우드 배포 (24/7 운영, 서버 선택 필요)
 
 ## 프로젝트 구조
@@ -77,14 +94,34 @@ trading-bot/
 │   ├── frontend_agent.py
 │   ├── designer_agent.py
 │   └── team.py
-├── mobile/                        # Flutter 앱 (생성됨)
+├── mobile/                        # Flutter 앱
 │   ├── lib/
-│   │   ├── screens/               # home, balance, orders, jobs, auth/login
-│   │   ├── providers/             # price, balance, job, auth
-│   │   └── models/
-│   ├── ios/Runner/                # GoogleService-Info.plist 포함
-│   ├── macos/Runner/              # GoogleService-Info.plist, entitlements, Info.plist
-│   └── firebase_options.dart      # flutterfire configure 자동 생성
+│   │   ├── screens/
+│   │   │   ├── home/
+│   │   │   │   ├── home_screen.dart         # 왓치리스트 (Slidable + Reorderable)
+│   │   │   │   ├── stock_search_screen.dart # 종목 검색 전체화면 모달
+│   │   │   │   └── mini_chart_sheet.dart    # 미니차트 바텀시트 (면적 차트)
+│   │   │   ├── chart/chart_screen.dart      # 캔들스틱 차트 + 인터벌 선택
+│   │   │   ├── auto_trade/auto_trade_screen.dart
+│   │   │   ├── balance/balance_screen.dart
+│   │   │   ├── menu/menu_screen.dart
+│   │   │   ├── auth/login_screen.dart       # Google/Apple 로그인
+│   │   │   ├── onboarding/                  # 3단계 온보딩
+│   │   │   └── splash_screen.dart
+│   │   ├── providers/
+│   │   │   ├── auth_provider.dart           # Firebase Auth 상태
+│   │   │   ├── chart_provider.dart          # 선택 종목 공유 (홈↔차트)
+│   │   │   ├── price_provider.dart
+│   │   │   ├── balance_provider.dart
+│   │   │   └── job_provider.dart
+│   │   ├── services/
+│   │   │   └── market_data_service.dart     # KIS/Upbit/더미 시세 라우팅
+│   │   ├── core/app_colors.dart             # 디자인 토큰
+│   │   └── main.dart                        # MainScaffold (IndexedStack 5탭)
+│   ├── web/                                 # Flutter 웹 플랫폼
+│   ├── ios/Runner/                          # GoogleService-Info.plist
+│   ├── macos/Runner/                        # GoogleService-Info.plist, entitlements
+│   └── firebase_options.dart
 ├── tests/
 │   ├── test_kis_client.py         # 전략 유닛 테스트
 │   ├── test_ws_client.py          # WebSocket 파싱/콜백 테스트
@@ -171,17 +208,23 @@ FCM_CREDENTIALS_PATH=...        # Firebase 서비스 계정 JSON 경로 (선택)
 ## Flutter 앱 현황
 
 ### 완성된 것
-- 화면: home, balance, orders, jobs, login
-- 로그인: Google/Apple 버튼 UI + AuthProvider + Firebase Auth 연동
-- Firebase 프로젝트: `momentum-6ec82` (yeoingyu26@gmail.com)
-- Bundle ID: `com.momentumtrade.momentum` (iOS/Android/macOS 통일)
-- macOS 로그인 화면 UI 정상 확인 (스크린샷 완료)
+- 5탭 네비게이션: 홈/차트/자동매매/잔고/메뉴
+- 홈: 왓치리스트 (스와이프 액션, 드래그 정렬, 검색, 미니차트)
+- 차트: 캔들스틱 + 인터벌 선택 + 빠른 종목 선택
+- 자동매매: APScheduler 잡 CRUD
+- 잔고: KIS API 잔고 조회
+- 메뉴: 프로필 + 설정 + 로그아웃
+- 로그인: Google(웹/앱)/Apple(iOS only) + Firebase Auth
+- Firebase: `momentum-6ec82`, Bundle ID: `com.momentumtrade.momentum`
+- 실시간 시세: Upbit(암호화폐) 실제 작동, KIS(한국주식) 백엔드 필요
+- Figma: TradeBot-UI 파일 — 모든 Main 화면 + 미니차트 시트 완성
 
 ### 남은 것
 - iOS 실기기에서 Google/Apple 로그인 실제 동작 테스트 (USB 필요)
+- 글로벌 주식 시세: 백엔드에 Yahoo Finance 프록시 추가 필요
 - iOS 시뮬레이터 런타임 미설치 (Xcode 26.5 — 별도 다운로드 필요)
 
 ### 빌드 방법
-- macOS: `flutter run -d macos` (로그인 UI 확인용, 실제 로그인은 키체인 제한)
-- iOS 실기기: USB 연결 후 `flutter run` (실제 로그인 동작)
+- macOS: `flutter run -d macos`
 - Chrome: `flutter run -d chrome`
+- iOS 실기기: USB 연결 후 `flutter run`

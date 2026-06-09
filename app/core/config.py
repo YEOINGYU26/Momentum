@@ -3,7 +3,7 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # KIS API
     kis_app_key: str = ""
@@ -12,9 +12,8 @@ class Settings(BaseSettings):
     kis_account_product_code: str = "01"
     kis_is_mock: bool = True
 
-    # 텔레그램
-    telegram_bot_token: str = ""
-    telegram_chat_id: str = ""
+    # FCM 네이티브 푸시
+    fcm_credentials_path: str = ""  # Firebase 서비스 계정 JSON 경로
 
     # 서버
     app_host: str = "0.0.0.0"

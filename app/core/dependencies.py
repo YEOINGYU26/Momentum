@@ -5,7 +5,7 @@ from app.kis.client import KISClient
 from app.kis.market import MarketAPI
 from app.kis.orders import OrdersAPI
 from app.kis.account import AccountAPI
-from app.services.telegram import TelegramNotifier
+from app.services.push import PushNotifier
 from app.services.price_monitor import PriceMonitorService
 from app.services.realtime import RealtimeService
 from app.services.scheduler import StrategyScheduler
@@ -32,8 +32,8 @@ def get_account_api() -> AccountAPI:
 
 
 @lru_cache
-def get_notifier() -> TelegramNotifier:
-    return TelegramNotifier(get_settings())
+def get_push_notifier() -> PushNotifier:
+    return PushNotifier(get_settings())
 
 
 @lru_cache
@@ -41,7 +41,7 @@ def get_price_monitor() -> PriceMonitorService:
     return PriceMonitorService(
         market_api=get_market_api(),
         orders_api=get_orders_api(),
-        notifier=get_notifier(),
+        notifier=get_push_notifier(),
     )
 
 
@@ -55,5 +55,5 @@ def get_scheduler() -> StrategyScheduler:
     return StrategyScheduler(
         market_api=get_market_api(),
         orders_api=get_orders_api(),
-        notifier=get_notifier(),
+        notifier=get_push_notifier(),
     )
