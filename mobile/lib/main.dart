@@ -3,10 +3,12 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'firebase_options.dart';
 import 'package:provider/provider.dart';
+import 'core/app_colors.dart';
 import 'providers/auth_provider.dart' as app_auth;
 import 'providers/price_provider.dart';
 import 'providers/balance_provider.dart';
 import 'providers/job_provider.dart';
+import 'screens/splash_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/home/home_screen.dart';
 import 'screens/balance/balance_screen.dart';
@@ -35,45 +37,25 @@ class TradingApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'KIS 자동매매',
+      title: 'Momentum',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF00C853),
+          seedColor: AppColors.green,
           brightness: Brightness.dark,
+          surface: AppColors.bg,
         ),
-        scaffoldBackgroundColor: const Color(0xFF0F0F23),
+        scaffoldBackgroundColor: AppColors.bg,
         cardTheme: CardThemeData(
-          color: const Color(0xFF1A1A2E),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          color: AppColors.card,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+        textTheme: const TextTheme(
+          bodyMedium: TextStyle(color: Colors.white),
         ),
         useMaterial3: true,
       ),
-      home: StreamBuilder<User?>(
-        stream: FirebaseAuth.instance.authStateChanges(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const _SplashScreen();
-          }
-          if (snapshot.hasData) {
-            return const MainScaffold();
-          }
-          return const LoginScreen();
-        },
-      ),
-    );
-  }
-}
-
-class _SplashScreen extends StatelessWidget {
-  const _SplashScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: CircularProgressIndicator(color: Color(0xFF00C853)),
-      ),
+      home: const SplashScreen(),
     );
   }
 }
@@ -96,17 +78,45 @@ class _MainScaffoldState extends State<MainScaffold> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    // Listen for sign-out and navigate to login
+    FirebaseAuth.instance.authStateChanges().listen((user) {
+      if (user == null && mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+          (_) => false,
+        );
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: _screens[_index],
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
+        backgroundColor: AppColors.card,
+        indicatorColor: AppColors.green.withValues(alpha: 0.15),
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.show_chart), label: '시세'),
-          NavigationDestination(icon: Icon(Icons.account_balance_wallet), label: '잔고'),
-          NavigationDestination(icon: Icon(Icons.auto_mode), label: '전략'),
-          NavigationDestination(icon: Icon(Icons.swap_horiz), label: '주문'),
+          NavigationDestination(
+            icon: Icon(Icons.show_chart),
+            label: '시세',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.account_balance_wallet),
+            label: '잔고',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.auto_mode),
+            label: '전략',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.swap_horiz),
+            label: '주문',
+          ),
         ],
       ),
     );
