@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart' as app_auth;
@@ -23,8 +24,10 @@ class LoginScreen extends StatelessWidget {
                     const CircularProgressIndicator()
                   else ...[
                     _GoogleButton(onTap: auth.signInWithGoogle),
-                    const SizedBox(height: 12),
-                    _AppleButton(onTap: auth.signInWithApple),
+                    if (!kIsWeb) ...[
+                      const SizedBox(height: 12),
+                      _AppleButton(onTap: auth.signInWithApple),
+                    ],
                   ],
                   const Spacer(),
                 ],
