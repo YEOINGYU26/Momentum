@@ -20,10 +20,8 @@ class CandleData {
       if (v is num) return v.toDouble();
       return double.tryParse(v?.toString() ?? '') ?? 0;
     }
-
     int t = 0;
-    final ds =
-        (j['stck_bsop_date'] ?? j['date'])?.toString() ?? '';
+    final ds = (j['stck_bsop_date'] ?? j['date'])?.toString() ?? '';
     if (ds.length == 8) {
       try {
         t = DateTime.utc(
@@ -59,10 +57,26 @@ class _CandleChartState extends State<CandleChart> {
   static const double _maxVisible = 200;
   static const double _priceAxisW = 58;
 
+  // Horizontal
   double _visibleCount = 60;
-  double _scrollOffset = 0; // candles hidden from the right end (0 = latest)
-  Offset? _crosshairPos;
+  double _scrollOffset = 0;
   double _scaleStartVisible = 60;
+
+  // Vertical (price zoom)
+  double _priceZoom = 1.0;
+  double _scaleStartPriceZoom = 1.0;
+
+  // Crosshair — null = hidden, non-null = visible (sticky)
+  Offset? _crosshairPos;
+
+  // Gesture zone detection
+  bool _gestureInPriceAxis = false;
+  bool _isLongPressing = false;
+
+  // 크로스헤어 상대 이동용
+  Offset? _longPressStartFinger;
+  Offset? _crosshairAtPressStart;
+
   Size _size = Size.zero;
 
   List<CandleData> get _candles => widget.candles;
@@ -70,7 +84,10 @@ class _CandleChartState extends State<CandleChart> {
   @override
   void didUpdateWidget(CandleChart old) {
     super.didUpdateWidget(old);
-    if (old.candles != widget.candles) _scrollOffset = 0;
+    if (old.candles != widget.candles) {
+      _scrollOffset = 0;
+      _priceZoom = 1.0;
+    }
   }
 
   double get _chartW => math.max(_size.width - _priceAxisW, 1);
@@ -81,8 +98,7 @@ class _CandleChartState extends State<CandleChart> {
     final off = _scrollOffset.clamp(0.0, max);
     final end = (_candles.length - off.toInt()).clamp(0, _candles.length);
     final start = (end - _visibleCount.ceil()).clamp(0, _candles.length);
-    final visible = end - start;
-    return (start: start, end: end, rightPad: _visibleCount - visible);
+    return (start: start, end: end, rightPad: _visibleCount - (end - start));
   }
 
   @override
@@ -90,31 +106,86 @@ class _CandleChartState extends State<CandleChart> {
     return LayoutBuilder(builder: (_, c) {
       _size = c.biggest;
       return GestureDetector(
-        onScaleStart: (_) => _scaleStartVisible = _visibleCount,
-        onScaleUpdate: (d) => setState(() {
-          if (d.pointerCount >= 2) {
-            _visibleCount =
-                (_scaleStartVisible / d.scale).clamp(_minVisible, _maxVisible);
-          } else {
-            final max =
-                math.max(0.0, _candles.length.toDouble() - _visibleCount);
-            _scrollOffset =
-                (_scrollOffset - d.focalPointDelta.dx / _candleW)
-                    .clamp(0.0, max);
-          }
-        }),
-        onLongPressStart: (d) => _handleCrosshair(d.localPosition),
-        onLongPressMoveUpdate: (d) => _handleCrosshair(d.localPosition),
-        onLongPressEnd: (_) {
-          setState(() => _crosshairPos = null);
-          widget.onCrosshair?.call(null);
+        // ── Pan / Zoom ──────────────────────────────────────────────
+        onScaleStart: (d) {
+          _gestureInPriceAxis = d.localFocalPoint.dx > _chartW;
+          _scaleStartVisible = _visibleCount;
+          _scaleStartPriceZoom = _priceZoom;
         },
+        onScaleUpdate: (d) {
+          if (_gestureInPriceAxis) {
+            setState(() {
+              if (d.pointerCount >= 2) {
+                _priceZoom = (_scaleStartPriceZoom * d.scale).clamp(0.15, 10.0);
+              } else {
+                _priceZoom = (_priceZoom *
+                        math.exp(-d.focalPointDelta.dy / 80))
+                    .clamp(0.15, 10.0);
+              }
+            });
+            return;
+          }
+          if (d.pointerCount >= 2) {
+            setState(() {
+              _visibleCount = (_scaleStartVisible / d.scale)
+                  .clamp(_minVisible, _maxVisible);
+            });
+            return;
+          }
+          // 단일 손가락 슬라이드: 롱프레스 중이 아니면 십자선 제거 + 패닝
+          if (_isLongPressing) return;
+          final hadCrosshair = _crosshairPos != null;
+          setState(() {
+            if (hadCrosshair) _crosshairPos = null;
+            final max = math.max(0.0, _candles.length.toDouble() - _visibleCount);
+            _scrollOffset =
+                (_scrollOffset + d.focalPointDelta.dx / _candleW)
+                    .clamp(0.0, max);
+          });
+          if (hadCrosshair) widget.onCrosshair?.call(null);
+        },
+        // ── Crosshair ───────────────────────────────────────────────
+        onLongPressStart: (d) {
+          _isLongPressing = true;
+          _longPressStartFinger = d.localPosition;
+          if (_crosshairPos == null) {
+            // 십자선 없으면 누른 위치에 생성
+            _showCrosshair(d.localPosition);
+          }
+          _crosshairAtPressStart = _crosshairPos;
+        },
+        onLongPressMoveUpdate: (d) {
+          final startFinger = _longPressStartFinger;
+          final startCrosshair = _crosshairAtPressStart;
+          if (startFinger == null || startCrosshair == null) {
+            _showCrosshair(d.localPosition);
+            return;
+          }
+          // 손가락 이동량만큼 기존 십자선 위치에서 상대 이동
+          final delta = d.localPosition - startFinger;
+          _showCrosshair(startCrosshair + delta);
+        },
+        onLongPressEnd: (_) {
+          _isLongPressing = false;
+          _longPressStartFinger = null;
+          _crosshairAtPressStart = null;
+          // 십자선 유지
+        },
+        onTap: () {
+          // Tap dismisses the crosshair
+          if (_crosshairPos != null) {
+            setState(() => _crosshairPos = null);
+            widget.onCrosshair?.call(null);
+          }
+        },
+
         child: CustomPaint(
           size: _size,
           painter: _Painter(
             candles: _candles,
             visibleCount: _visibleCount,
             scrollOffset: _scrollOffset,
+            priceZoom: _priceZoom,
             crosshairPos: _crosshairPos,
           ),
         ),
@@ -122,16 +193,19 @@ class _CandleChartState extends State<CandleChart> {
     });
   }
 
-  void _handleCrosshair(Offset pos) {
+  void _showCrosshair(Offset pos) {
     if (_candles.isEmpty) return;
-    setState(() => _crosshairPos = pos);
-
     final r = _range();
     final visible = _candles.sublist(r.start, r.end);
     if (visible.isEmpty) return;
-    final idx =
-        ((pos.dx / _candleW) - r.rightPad).round().clamp(0, visible.length - 1);
-    widget.onCrosshair?.call(visible[idx]);
+
+    // Snap x to nearest candle center
+    final rawSlot = pos.dx / _candleW - r.rightPad;
+    final slot = rawSlot.round().clamp(0, visible.length - 1);
+    final snappedX = (r.rightPad + slot + 0.5) * _candleW;
+
+    setState(() => _crosshairPos = Offset(snappedX, pos.dy));
+    widget.onCrosshair?.call(visible[slot]);
   }
 }
 
@@ -141,6 +215,7 @@ class _Painter extends CustomPainter {
   final List<CandleData> candles;
   final double visibleCount;
   final double scrollOffset;
+  final double priceZoom;
   final Offset? crosshairPos;
 
   static const _priceAxisW = 58.0;
@@ -151,6 +226,7 @@ class _Painter extends CustomPainter {
     required this.candles,
     required this.visibleCount,
     required this.scrollOffset,
+    required this.priceZoom,
     required this.crosshairPos,
   });
 
@@ -172,9 +248,9 @@ class _Painter extends CustomPainter {
     final vis = candles.sublist(start, end);
     if (vis.isEmpty) return;
 
-    final rightPad = visibleCount - vis.length; // empty slots on left
+    final rightPad = visibleCount - vis.length;
 
-    // Price + volume range
+    // Auto price range from visible candles
     double lo = vis[0].low, hi = vis[0].high, maxVol = vis[0].volume;
     for (final c in vis) {
       if (c.low < lo) lo = c.low;
@@ -182,12 +258,19 @@ class _Painter extends CustomPainter {
       if (c.volume > maxVol) maxVol = c.volume;
     }
     final pad = (hi - lo) * 0.06;
-    final pMin = lo - pad;
-    final pMax = hi + pad;
+    final autoMin = lo - pad;
+    final autoMax = hi + pad;
+    final autoCenter = (autoMin + autoMax) / 2;
+    final autoHalf = (autoMax - autoMin) / 2;
+
+    // Apply vertical zoom (priceZoom > 1 = zoomed in = smaller range)
+    final zoomedHalf = autoHalf / priceZoom;
+    final pMin = autoCenter - zoomedHalf;
+    final pMax = autoCenter + zoomedHalf;
     final pSpan = pMax - pMin;
     if (pSpan <= 0) return;
 
-    py(double p) => priceH - (p - pMin) / pSpan * priceH;
+    double py(double p) => priceH - (p - pMin) / pSpan * priceH;
     double vy(double v) => maxVol > 0 ? (v / maxVol) * volH * 0.9 : 0;
 
     // ── Grid ────────────────────────────────────────────────────────
@@ -195,8 +278,7 @@ class _Painter extends CustomPainter {
       ..color = const Color(0xFF252A34)
       ..strokeWidth = 0.5;
     for (var i = 1; i < 5; i++) {
-      final y = priceH * i / 5;
-      canvas.drawLine(Offset(0, y), Offset(chartW, y), grid);
+      canvas.drawLine(Offset(0, priceH * i / 5), Offset(chartW, priceH * i / 5), grid);
     }
     canvas.drawLine(Offset(0, priceH), Offset(chartW, priceH), grid);
 
@@ -208,13 +290,14 @@ class _Painter extends CustomPainter {
       final col = isUp ? AppColors.green : AppColors.red;
       final bw = math.max(candleW * 0.65, 1.0);
 
-      // Wick
-      canvas.drawLine(Offset(x, py(c.high)), Offset(x, py(c.low)),
-          Paint()
-            ..color = col
-            ..strokeWidth = math.max(candleW * 0.12, 0.8));
+      canvas.drawLine(
+        Offset(x, py(c.high)),
+        Offset(x, py(c.low)),
+        Paint()
+          ..color = col
+          ..strokeWidth = math.max(candleW * 0.12, 0.8),
+      );
 
-      // Body
       final top = py(math.max(c.open, c.close));
       final bot = py(math.min(c.open, c.close));
       canvas.drawRect(
@@ -222,7 +305,6 @@ class _Painter extends CustomPainter {
         Paint()..color = col,
       );
 
-      // Volume bar
       final vh = vy(c.volume);
       canvas.drawRect(
         Rect.fromLTWH(x - bw / 2, priceH + volH - vh, bw, vh),
@@ -246,8 +328,8 @@ class _Painter extends CustomPainter {
     final step = math.max(1, (vis.length / 5).round());
     for (var i = 0; i < vis.length; i += step) {
       final x = (rightPad + i + 0.5) * candleW;
-      final dt =
-          DateTime.fromMillisecondsSinceEpoch(vis[i].time * 1000, isUtc: true);
+      final dt = DateTime.fromMillisecondsSinceEpoch(
+          vis[i].time * 1000, isUtc: true);
       tp.text = TextSpan(
           text: '${dt.month}/${dt.day}',
           style: const TextStyle(color: AppColors.gray, fontSize: 10));
@@ -257,34 +339,55 @@ class _Painter extends CustomPainter {
       }
     }
 
-    // ── Crosshair ───────────────────────────────────────────────────
+    // ── Crosshair (dashed) ──────────────────────────────────────────
     if (crosshairPos != null) {
       final pos = crosshairPos!;
-      final slotF = pos.dx / candleW - rightPad;
-      final slot = slotF.round().clamp(0, vis.length - 1);
+      final slot = ((pos.dx / candleW) - rightPad)
+          .round()
+          .clamp(0, vis.length - 1);
       final sx = (rightPad + slot + 0.5) * candleW;
       final c = vis[slot];
 
-      final ch = Paint()
-        ..color = AppColors.gray.withValues(alpha: 0.5)
-        ..strokeWidth = 0.5;
+      final dash = Paint()
+        ..color = AppColors.gray.withValues(alpha: 0.7)
+        ..strokeWidth = 0.8;
 
-      canvas.drawLine(Offset(sx, 0), Offset(sx, usableH), ch);
+      // Vertical dashed line (snapped to candle center)
+      _dashed(canvas, Offset(sx, 0), Offset(sx, usableH), dash);
 
+      // Horizontal dashed line (at touch y, price area only)
       if (pos.dy >= 0 && pos.dy < priceH) {
-        canvas.drawLine(Offset(0, pos.dy), Offset(chartW, pos.dy), ch);
-
-        // Price label on axis
+        _dashed(canvas, Offset(0, pos.dy), Offset(chartW, pos.dy), dash);
         final price = pMin + (1 - pos.dy / priceH) * pSpan;
         _axisLabel(canvas, chartW + 4, pos.dy, _fmt(price), center: false);
       }
 
-      // Time label
-      final dt =
-          DateTime.fromMillisecondsSinceEpoch(c.time * 1000, isUtc: true);
-      _axisLabel(canvas, sx, usableH + 4,
-          '${dt.year}/${dt.month.toString().padLeft(2, '0')}/${dt.day.toString().padLeft(2, '0')}',
-          center: true);
+      // Time label at bottom
+      final dt = DateTime.fromMillisecondsSinceEpoch(
+          c.time * 1000, isUtc: true);
+      _axisLabel(
+        canvas, sx, usableH + 4,
+        '${dt.year}/${dt.month.toString().padLeft(2, '0')}/${dt.day.toString().padLeft(2, '0')}',
+        center: true,
+      );
+    }
+  }
+
+  void _dashed(Canvas canvas, Offset p1, Offset p2, Paint paint,
+      {double dash = 4, double gap = 4}) {
+    final d = p2 - p1;
+    final len = d.distance;
+    if (len == 0) return;
+    final unit = d / len;
+    double pos = 0;
+    bool draw = true;
+    while (pos < len) {
+      final seg = math.min(pos + (draw ? dash : gap), len);
+      if (draw) {
+        canvas.drawLine(p1 + unit * pos, p1 + unit * seg, paint);
+      }
+      pos = seg;
+      draw = !draw;
     }
   }
 
@@ -294,7 +397,9 @@ class _Painter extends CustomPainter {
       text: TextSpan(
           text: text,
           style: const TextStyle(
-              color: Colors.white, fontSize: 10, fontWeight: FontWeight.w500)),
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w500)),
       textDirection: TextDirection.ltr,
     )..layout();
     final lx = center ? x - tp.width / 2 : x;
@@ -309,8 +414,9 @@ class _Painter extends CustomPainter {
   String _fmt(double p) {
     if (p >= 1e6) return '${(p / 1e6).toStringAsFixed(2)}M';
     if (p >= 1000) {
-      return p.toStringAsFixed(0).replaceAllMapped(
-          RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');
+      return p
+          .toStringAsFixed(0)
+          .replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');
     }
     if (p < 1) return p.toStringAsFixed(4);
     return p.toStringAsFixed(2);
@@ -321,5 +427,6 @@ class _Painter extends CustomPainter {
       candles != old.candles ||
       visibleCount != old.visibleCount ||
       scrollOffset != old.scrollOffset ||
+      priceZoom != old.priceZoom ||
       crosshairPos != old.crosshairPos;
 }

@@ -45,7 +45,7 @@ class _ChartScreenState extends State<ChartScreen> {
     try {
       final res = await http
           .get(Uri.parse(
-              'http://localhost:8000/api/v1/market/ohlcv/$_currentTicker'))
+              'https://358f13bb37fe73.lhr.life/api/v1/market/ohlcv/$_currentTicker'))
           .timeout(const Duration(seconds: 5));
       if (!mounted) return;
       if (res.statusCode == 200) {
@@ -55,13 +55,41 @@ class _ChartScreenState extends State<ChartScreen> {
             .where((c) => c.time > 0)
             .toList()
           ..sort((a, b) => a.time.compareTo(b.time));
-        setState(() => _candles = parsed);
+        setState(() => _candles = parsed.isNotEmpty ? parsed : _demoCandles());
       }
     } catch (_) {
-      // Keep existing data on error
+      if (mounted && _candles.isEmpty) {
+        setState(() => _candles = _demoCandles());
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  List<CandleData> _demoCandles() {
+    final now = DateTime.now();
+    final candles = <CandleData>[];
+    double price = 70000;
+    for (int i = 200; i >= 0; i--) {
+      final t = now.subtract(Duration(days: i));
+      final open = price;
+      price += (i % 3 == 0 ? 1 : -1) * price * 0.015 *
+          (0.5 + (i * 7 % 10) / 10);
+      final close = price;
+      final high = [open, close].reduce((a, b) => a > b ? a : b) *
+          (1 + (i % 5) * 0.002);
+      final low = [open, close].reduce((a, b) => a < b ? a : b) *
+          (1 - (i % 4) * 0.002);
+      candles.add(CandleData(
+        time: t.millisecondsSinceEpoch ~/ 1000,
+        open: open,
+        high: high,
+        low: low,
+        close: close,
+        volume: 500000 + (i * 31337) % 1500000,
+      ));
+    }
+    return candles;
   }
 
   @override
