@@ -78,7 +78,9 @@ trading-bot/
 │   │   │   │   ├── home_screen.dart         # 왓치리스트 (Slidable + Reorderable)
 │   │   │   │   ├── stock_search_screen.dart # 종목 검색 전체화면 모달
 │   │   │   │   └── mini_chart_sheet.dart    # 미니차트 바텀시트 (면적 차트)
-│   │   │   ├── chart/chart_screen.dart      # 캔들스틱 차트 + 인터벌 선택
+│   │   │   ├── chart/
+│   │   │   │   ├── chart_screen.dart        # 캔들스틱 차트 화면 + 인터벌 선택 + 데모 폴백
+│   │   │   │   └── candle_chart.dart        # Flutter CustomPainter 네이티브 캔들차트
 │   │   │   ├── auto_trade/auto_trade_screen.dart
 │   │   │   ├── balance/balance_screen.dart
 │   │   │   ├── menu/menu_screen.dart
@@ -186,3 +188,18 @@ FCM_CREDENTIALS_PATH=...        # Firebase 서비스 계정 JSON 경로 (선택)
 - macOS: `flutter run -d macos`
 - Chrome: `flutter run -d chrome`
 - iOS 실기기: USB 연결 후 `flutter run`
+
+## 네트워크 연결 (개발 시)
+- 아이폰 ↔ 맥 백엔드 연결: `ssh -R 80:localhost:8000 nokey@localhost.run`
+- 발급된 URL을 `mobile/lib/screens/chart/chart_screen.dart` 내 URL 상수에 업데이트
+- AP isolation 문제로 로컬 IP 직접 연결 불가 → 터널 필수
+- 데모 데이터 폴백: 백엔드 없어도 차트 표시됨 (200개 더미 캔들)
+
+## 캔들차트 (candle_chart.dart) 주요 기능
+- Flutter CustomPainter 기반 네이티브 구현 (WebView/TradingView 미사용)
+- 롱프레스 → 점선 크로스헤어 표시, 손 뗀 후 유지, 탭으로 해제
+- 크로스헤어 활성 시 어디서든 꾹 누르면 상대 위치로 이동
+- 슬라이드(패닝) 시 크로스헤어 자동 해제 + 차트 스크롤
+- 오른쪽 가격축 드래그 → 세로 줌 (exp 스케일)
+- 차트 영역 핀치 → 가로 줌 (visibleCount 조절)
+- 오른쪽 슬라이드 → 과거 데이터, 왼쪽 슬라이드 → 최신 데이터
