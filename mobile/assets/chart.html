@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #0D0F14; overflow: hidden; }
+    #chart { width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="chart"></div>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script>
+    var chart = LightweightCharts.createChart(document.getElementById('chart'), {
+      layout: {
+        background: { type: 'solid', color: '#0D0F14' },
+        textColor: '#8B95A8',
+        fontSize: 11,
+      },
+      grid: {
+        vertLines: { color: '#252A34' },
+        horzLines: { color: '#252A34' },
+      },
+      crosshair: {
+        mode: LightweightCharts.CrosshairMode.Normal,
+        vertLine: { labelBackgroundColor: '#252A34' },
+        horzLine: { labelBackgroundColor: '#252A34' },
+      },
+      rightPriceScale: { borderColor: '#252A34' },
+      timeScale: {
+        borderColor: '#252A34',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+    });
+
+    var candleSeries = chart.addCandlestickSeries({
+      upColor: '#00E5A0',
+      downColor: '#ED4040',
+      borderUpColor: '#00E5A0',
+      borderDownColor: '#ED4040',
+      wickUpColor: '#00E5A0',
+      wickDownColor: '#ED4040',
+    });
+
+    var volumeSeries = chart.addHistogramSeries({
+      priceScaleId: 'volume',
+    });
+    chart.priceScale('volume').applyOptions({
+      scaleMargins: { top: 0.82, bottom: 0 },
+    });
+
+    function loadDemo() {
+      var candles = [], volumes = [];
+      var price = 70000;
+      var now = Math.floor(Date.now() / 1000);
+      for (var i = 200; i >= 0; i--) {
+        var time = now - i * 86400;
+        var open = price;
+        price += (Math.random() - 0.47) * price * 0.025;
+        var close = price;
+        var high = Math.max(open, close) * (1 + Math.random() * 0.009);
+        var low = Math.min(open, close) * (1 - Math.random() * 0.009);
+        candles.push({
+          time: time,
+          open: Math.round(open),
+          high: Math.round(high),
+          low: Math.round(low),
+          close: Math.round(close),
+        });
+        volumes.push({
+          time: time,
+          value: Math.floor(Math.random() * 2000000 + 500000),
+          color: close >= open ? 'rgba(0,229,160,0.25)' : 'rgba(237,64,64,0.25)',
+        });
+      }
+      candleSeries.setData(candles);
+      volumeSeries.setData(volumes);
+      chart.timeScale().fitContent();
+    }
+    loadDemo();
+
+    // Called from Flutter: updateChart({candles: [...], volumes: [...]})
+    function updateChart(data) {
+      if (!data || !data.candles || !data.candles.length) return;
+      candleSeries.setData(data.candles);
+      if (data.volumes && data.volumes.length) volumeSeries.setData(data.volumes);
+      chart.timeScale().fitContent();
+    }
+
+    // Called from Flutter: updateTick({time, open, high, low, close})
+    function updateTick(tick) {
+      candleSeries.update(tick);
+    }
+
+    // Send crosshair OHLCV to Flutter
+    chart.subscribeCrosshairMove(function(param) {
+      if (!param.time) return;
+      var c = param.seriesData.get(candleSeries);
+      if (c && typeof ChartChannel !== 'undefined') {
+        ChartChannel.postMessage(JSON.stringify({
+          type: 'ohlc',
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          time: param.time,
+        }));
+      }
+    });
+
+    window.addEventListener('resize', function() {
+      chart.applyOptions({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+    });
+  </script>
+</body>
+</html>

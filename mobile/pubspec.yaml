@@ -42,6 +42,7 @@ dependencies:
   crypto: ^3.0.5
   shared_preferences: ^2.3.2
   flutter_slidable: ^3.1.0
+  webview_flutter: ^4.10.0
 
 dev_dependencies:
   flutter_test:
@@ -67,6 +68,7 @@ flutter:
 
   assets:
     - assets/images/
+    - assets/chart.html
 
   # To add assets to your application, add an assets section, like this:
   # assets:
