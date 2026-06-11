@@ -1,9 +1,21 @@
 # KIS 자동매매 시스템 — 프로젝트 컨텍스트
 
+## 세션 시작 파이프라인
+**새 대화가 시작되면 반드시 아래 순서를 실행할 것:**
+
+1. **Jira 조회** — `mcp__atlassian__searchJiraIssuesUsingJql` 으로 KAN 프로젝트 미완료 이슈 조회
+   - JQL: `project = KAN AND status != 완료 ORDER BY created ASC`
+   - cloudId: `3c7947ac-7881-48f5-b750-26b06c9ce78e`
+2. **현황 요약 출력** — 진행 중 / 해야 할 일 이슈 목록을 표로 출력
+3. **다음 작업 제안** — 우선순위 기준으로 이어할 작업 제안
+
+> 작업 진행 상황의 Source of Truth는 Jira. CLAUDE.md에 완료 체크리스트를 쌓지 말 것.
+
 ## 규칙
 - 작업 완료 시 항상 Git 커밋할 것
 - 커밋 메시지는 한국어로 작성
 - Jira 이슈 번호 포함할 것 (예: KAN-1)
+- 작업 완료 시 해당 Jira 이슈를 "완료"로 전환할 것 (`mcp__atlassian__transitionJiraIssue`, transition id: `"41"`)
 - Jira 이슈 생성/수정 시 description은 반드시 `contentFormat: "adf"` + ADF JSON 구조로 작성 (markdown 포맷은 \n이 이중 이스케이프되어 글자 그대로 노출됨)
 
 ## 프로젝트 목표
@@ -19,41 +31,6 @@
 - **Python**: 3.9, 가상환경 `.venv/`
 - **Flutter**: 3.44.1 설치됨, Xcode 26.5 설치됨
 - **서버 실행**: `.venv/bin/uvicorn app.main:app --reload`
-
-## 현재 진행 상태
-
-### 완료
-- [x] 1단계: FastAPI 백엔드 + KIS 모의투자 API 연동
-- [x] 2단계: KIS WebSocket 실시간 호가 수신
-- [x] 3단계: APScheduler 전략 자동 실행
-- [x] 4단계: Flutter 모바일 앱 초기 구조 (home/balance/orders/jobs 화면)
-- [x] Firebase FCM 푸시 알림 백엔드 (telegram.py 제거, push.py 추가)
-- [x] Google/Apple 로그인 화면 구현 (AuthProvider, LoginScreen, Firebase Auth 연동)
-- [x] Firebase 프로젝트 설정 (momentum-6ec82, Bundle ID: com.momentumtrade.momentum)
-- [x] macOS 빌드 환경 구성 (entitlements, URL scheme, DEVELOPMENT_TEAM)
-- [x] 로그인 화면 macOS에서 UI 정상 확인
-- [x] Flutter 웹 플랫폼 추가 (Chrome에서 Google 로그인, signInWithPopup)
-- [x] 5탭 하단 네비게이션: 홈 / 차트 / 자동매매 / 잔고 / 메뉴
-- [x] 홈 화면: TradingView 스타일 왓치리스트
-  - 섹션별 그룹 (주가지수/가상화폐/주식), 7개 기본 종목
-  - 왼쪽 스와이프: 알림/순서/삭제 버튼 (flutter_slidable 3.1.2)
-  - 드래그 핸들로 순서 변경 (ReorderableListView)
-  - + 버튼 / 즐겨찾기 추가 → 종목 검색 화면 (StockSearchScreen)
-  - 종목 탭: 미니차트 바텀시트 → "더보기" 아이콘 → 차트 탭 이동
-- [x] 실시간 시세 (MarketDataService):
-  - 암호화폐: Upbit 공개 API (실제 동작 확인)
-  - 한국 주식: KIS 백엔드 (uvicorn 실행 시 동작)
-  - 글로벌 주식: 더미 데이터 (Yahoo Finance CORS 문제)
-- [x] Figma 디자인 업데이트 (TradeBot-UI 파일):
-  - Main/홈/Dark: 왓치리스트 UI로 전면 교체
-  - Main/종목/Dark → Main/차트/Dark: 캔들스틱 차트 화면
-  - 모든 화면 하단 탭바 "종목" → "차트" 수정
-  - 미니차트 바텀시트 화면 추가 (Main/홈/MiniChart Sheet)
-
-### 다음에 이어서 할 일
-- [ ] KAN-10: iOS 실기기 Google/Apple 로그인 실제 동작 테스트 (USB 케이블 필요)
-- [ ] KAN-11: 글로벌 주식 실시간 시세 — Yahoo Finance 프록시 엔드포인트 추가 (`/api/v1/market/price/global/{ticker}`)
-- [ ] KAN-12: 클라우드 배포 (24/7 운영, 서버 선택 필요)
 
 ## 프로젝트 구조
 
@@ -205,26 +182,7 @@ FCM_CREDENTIALS_PATH=...        # Firebase 서비스 계정 JSON 경로 (선택)
 
 현재 24개 테스트 전부 통과.
 
-## Flutter 앱 현황
-
-### 완성된 것
-- 5탭 네비게이션: 홈/차트/자동매매/잔고/메뉴
-- 홈: 왓치리스트 (스와이프 액션, 드래그 정렬, 검색, 미니차트)
-- 차트: 캔들스틱 + 인터벌 선택 + 빠른 종목 선택
-- 자동매매: APScheduler 잡 CRUD
-- 잔고: KIS API 잔고 조회
-- 메뉴: 프로필 + 설정 + 로그아웃
-- 로그인: Google(웹/앱)/Apple(iOS only) + Firebase Auth
-- Firebase: `momentum-6ec82`, Bundle ID: `com.momentumtrade.momentum`
-- 실시간 시세: Upbit(암호화폐) 실제 작동, KIS(한국주식) 백엔드 필요
-- Figma: TradeBot-UI 파일 — 모든 Main 화면 + 미니차트 시트 완성
-
-### 남은 것
-- iOS 실기기에서 Google/Apple 로그인 실제 동작 테스트 (USB 필요)
-- 글로벌 주식 시세: 백엔드에 Yahoo Finance 프록시 추가 필요
-- iOS 시뮬레이터 런타임 미설치 (Xcode 26.5 — 별도 다운로드 필요)
-
-### 빌드 방법
+## Flutter 앱 빌드 방법
 - macOS: `flutter run -d macos`
 - Chrome: `flutter run -d chrome`
 - iOS 실기기: USB 연결 후 `flutter run`
