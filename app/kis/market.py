@@ -1,12 +1,13 @@
+from datetime import date, timedelta
+
 from app.kis.client import KISClient
 
 
 class MarketAPI:
     """시세 조회 관련 KIS API"""
 
-    # 모의/실거래 공통 tr_id
     _TR_PRICE = "FHKST01010100"
-    _TR_DAILY_PRICE = "FHKST01010400"
+    _TR_DAILY_CHART = "FHKST03010100"  # 일/주/월 캔들차트 (inquire-daily-itemchartprice)
 
     def __init__(self, client: KISClient):
         self._client = client
@@ -35,16 +36,20 @@ class MarketAPI:
         }
 
     async def get_daily_ohlcv(self, ticker: str, period: str = "D") -> list[dict]:
-        """일/주/월봉 데이터 조회 (period: D/W/M)"""
+        """일/주/월봉 캔들 데이터 조회 (period: D/W/M)"""
+        end = date.today().strftime("%Y%m%d")
+        start = (date.today() - timedelta(days=365)).strftime("%Y%m%d")
         params = {
             "fid_cond_mrkt_div_code": "J",
             "fid_input_iscd": ticker,
             "fid_period_div_code": period,
             "fid_org_adj_prc": "0",
+            "fid_input_date_1": start,
+            "fid_input_date_2": end,
         }
         body = await self._client.get(
-            "/uapi/domestic-stock/v1/quotations/inquire-daily-price",
-            self._TR_DAILY_PRICE,
+            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+            self._TR_DAILY_CHART,
             params,
         )
         rows = body.get("output2", [])

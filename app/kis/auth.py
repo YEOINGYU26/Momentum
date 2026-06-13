@@ -60,7 +60,7 @@ class KISAuth:
             "appsecret": self._settings.kis_app_secret,
         }
         async with httpx.AsyncClient() as client:
-            resp = client.post(url, json=payload, timeout=10)
+            resp = await client.post(url, json=payload, timeout=10)
             resp.raise_for_status()
             body = resp.json()
 

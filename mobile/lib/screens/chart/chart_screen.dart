@@ -4,6 +4,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
 import '../../core/app_colors.dart';
+import '../../core/constants.dart';
 import '../../providers/chart_provider.dart';
 import 'candle_chart.dart';
 
@@ -45,7 +46,7 @@ class _ChartScreenState extends State<ChartScreen> {
     try {
       final res = await http
           .get(Uri.parse(
-              'https://358f13bb37fe73.lhr.life/api/v1/market/ohlcv/$_currentTicker'))
+              '$kBaseUrl/api/v1/market/ohlcv/$_currentTicker'))
           .timeout(const Duration(seconds: 5));
       if (!mounted) return;
       if (res.statusCode == 200) {
