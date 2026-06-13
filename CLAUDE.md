@@ -30,7 +30,8 @@
 - **IDE**: IntelliJ IDEA (Flutter 플러그인 설치됨)
 - **Python**: 3.9, 가상환경 `.venv/`
 - **Flutter**: 3.44.1 설치됨, Xcode 26.5 설치됨
-- **서버 실행**: `.venv/bin/uvicorn app.main:app --reload`
+- **서버 실행**: `.venv/bin/uvicorn app.main:app --reload --reload-dir app`
+  - `--reload-dir app` 필수 — 없으면 `mobile/build/` 변경에 반응해 서버가 계속 재시작됨
 
 ## 프로젝트 구조
 
@@ -190,10 +191,18 @@ FCM_CREDENTIALS_PATH=...        # Firebase 서비스 계정 JSON 경로 (선택)
 - iOS 실기기: USB 연결 후 `flutter run`
 
 ## 네트워크 연결 (개발 시)
-- 아이폰 ↔ 맥 백엔드 연결: `ssh -R 80:localhost:8000 nokey@localhost.run`
-- 발급된 URL을 `mobile/lib/screens/chart/chart_screen.dart` 내 URL 상수에 업데이트
-- AP isolation 문제로 로컬 IP 직접 연결 불가 → 터널 필수
+- 서버 URL 단일 관리: `mobile/lib/core/constants.dart`의 `kBaseUrl` / `kWsBaseUrl`
+  - 모든 화면이 이 상수를 참조 (chart_screen, market_data_service 포함)
+- 아이폰 ↔ 맥 연결 옵션 (KAN-15):
+  - **Tailscale (권장)**: 맥+아이폰에 설치 시 고정 IP(`100.x.x.x`) 부여, 터널 불필요
+  - **localhost.run 터널**: `ssh -R 80:localhost:8000 nokey@localhost.run` — URL이 매 연결마다 바뀜
+- AP isolation 문제로 로컬 IP 직접 연결 불가 → 터널 또는 Tailscale 필수
 - 데모 데이터 폴백: 백엔드 없어도 차트 표시됨 (200개 더미 캔들)
+
+## Flutter 실기기 빌드 주의사항
+- **debug 빌드** (`flutter run`): `flutter run` 세션 연결 중에만 동작. 아이콘 탭으로 독립 실행 불가.
+- **release 빌드** (`flutter run --release`): 독립 실행 가능. 실제 테스트 시 사용.
+- 실기기 flutter run 실행 디렉토리: `mobile/` (pubspec.yaml 위치)
 
 ## 캔들차트 (candle_chart.dart) 주요 기능
 - Flutter CustomPainter 기반 네이티브 구현 (WebView/TradingView 미사용)
