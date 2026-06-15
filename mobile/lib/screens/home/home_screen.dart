@@ -16,17 +16,30 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  List<_WItem> _items = [
-    _WItem(id: '1', section: '주가지수', ticker: 'KOSPI',  name: 'KOSPI Composite', sub: '코스피',               price: '2,650.50',   change: '+12.34',    pct: '+0.47%', up: true),
-    _WItem(id: '2', section: '주가지수', ticker: 'KOSDAQ', name: 'KOSDAQ',           sub: '코스닥',               price: '870.20',     change: '-5.80',     pct: '-0.66%', up: false),
-    _WItem(id: '3', section: '주가지수', ticker: 'SPX',    name: 'S&P 500',          sub: 'S&P 500 Index',        price: '5,308.15',   change: '+21.99',    pct: '+0.42%', up: true),
-    _WItem(id: '4', section: '가상화폐', ticker: 'BTC',    name: 'BTCKRW',           sub: 'Bitcoin / KRW',        price: '94,200,000', change: '-936,000',  pct: '-0.99%', up: false),
-    _WItem(id: '5', section: '가상화폐', ticker: 'ETH',    name: 'ETHKRW',           sub: 'Ethereum / KRW',       price: '5,120,000',  change: '+85,000',   pct: '+1.69%', up: true),
-    _WItem(id: '6', section: '주식',    ticker: '005930', name: '삼성전자',          sub: 'Samsung Electronics', price: '73,200',     change: '+1,300',    pct: '+1.81%', up: true),
-    _WItem(id: '7', section: '주식',    ticker: 'AAPL',   name: 'Apple',             sub: 'Apple Inc.',           price: '\$178.50',   change: '+0.62',     pct: '+0.35%', up: true),
-  ];
+  static const _sectionOrder = ['주식', '암호화폐', '해외주식', '기타'];
+
+  final Map<String, List<_WItem>> _sections = {
+    '주식': [
+      _WItem(id: '1', section: '주식', ticker: '005930', name: '삼성전자',   sub: 'Samsung Electronics', price: '-', change: '-', pct: '-', up: true),
+      _WItem(id: '2', section: '주식', ticker: '000660', name: 'SK하이닉스', sub: 'SK Hynix Inc',         price: '-', change: '-', pct: '-', up: true),
+      _WItem(id: '3', section: '주식', ticker: '035420', name: '네이버',     sub: 'NAVER Corp',           price: '-', change: '-', pct: '-', up: true),
+      _WItem(id: '4', section: '주식', ticker: '035720', name: '카카오',     sub: 'Kakao Corp',           price: '-', change: '-', pct: '-', up: true),
+      _WItem(id: '5', section: '주식', ticker: '005380', name: '현대차',     sub: 'Hyundai Motor',        price: '-', change: '-', pct: '-', up: true),
+      _WItem(id: '6', section: '주식', ticker: '051910', name: 'LG화학',     sub: 'LG Chem',              price: '-', change: '-', pct: '-', up: true),
+    ],
+    '암호화폐': [
+      _WItem(id: '7',  section: '암호화폐', ticker: 'BTC', name: 'Bitcoin',  sub: 'Bitcoin / KRW',  price: '-', change: '-', pct: '-', up: true),
+      _WItem(id: '8',  section: '암호화폐', ticker: 'ETH', name: 'Ethereum', sub: 'Ethereum / KRW', price: '-', change: '-', pct: '-', up: true),
+    ],
+  };
 
   bool _refreshing = false;
+
+  Iterable<_WItem> get _allItems =>
+      _sectionOrder.expand((s) => _sections[s] ?? []);
+
+  List<String> get _activeSections =>
+      _sectionOrder.where((s) => (_sections[s] ?? []).isNotEmpty).toList();
 
   @override
   void initState() {
@@ -37,25 +50,36 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _refreshPrices() async {
     if (_refreshing) return;
     setState(() => _refreshing = true);
-    final updated = await Future.wait(
-      _items.map((item) async {
-        final res = await MarketDataService.fetchPrice(item.ticker);
-        if (res == null) return item;
-        return item.copyWith(
-          price: res.price, change: res.change, pct: res.pct, up: res.isUp);
-      }),
-    );
-    if (mounted) setState(() { _items = updated; _refreshing = false; });
-  }
 
-  void _remove(String id) {
-    setState(() => _items.removeWhere((e) => e.id == id));
-  }
+    final futures = _allItems.map((item) async {
+      final res = await MarketDataService.fetchPrice(item.ticker);
+      if (res == null) return item;
+      return item.copyWith(price: res.price, change: res.change, pct: res.pct, up: res.isUp);
+    });
+    final updated = await Future.wait(futures);
 
-  void _reorder(int old, int neu) {
+    if (!mounted) return;
     setState(() {
-      if (neu > old) neu--;
-      _items.insert(neu, _items.removeAt(old));
+      int idx = 0;
+      for (final section in _sectionOrder) {
+        final list = _sections[section];
+        if (list == null) continue;
+        for (int i = 0; i < list.length; i++) {
+          list[i] = updated[idx++];
+        }
+      }
+      _refreshing = false;
+    });
+  }
+
+  void _remove(String section, String id) {
+    setState(() => _sections[section]?.removeWhere((e) => e.id == id));
+  }
+
+  void _reorderSection(String section, int oldIndex, int newIndex) {
+    setState(() {
+      final list = _sections[section]!;
+      list.insert(newIndex, list.removeAt(oldIndex));
     });
   }
 
@@ -65,12 +89,34 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (_) => StockSearchScreen(
-          alreadyAdded: _items.map((e) => e.ticker).toList(),
+          alreadyAdded: _allItems.map((e) => e.ticker).toList(),
           onAdd: (symbol) {
-            setState(() => _items.add(_WItem.fromSymbol(symbol)));
+            final section = _sections.containsKey(symbol.category)
+                ? symbol.category
+                : '기타';
+            setState(() {
+              _sections.putIfAbsent(section, () => []);
+              _sections[section]!.add(_WItem.fromSymbol(symbol));
+            });
+            MarketDataService.fetchPrice(symbol.ticker).then((res) {
+              if (!mounted || res == null) return;
+              setState(() {
+                final list = _sections[section];
+                if (list == null) return;
+                final i = list.indexWhere((e) => e.ticker == symbol.ticker);
+                if (i >= 0) {
+                  list[i] = list[i].copyWith(
+                    price: res.price, change: res.change, pct: res.pct, up: res.isUp);
+                }
+              });
+            });
           },
           onRemove: (ticker) {
-            setState(() => _items.removeWhere((e) => e.ticker == ticker));
+            setState(() {
+              for (final list in _sections.values) {
+                list.removeWhere((e) => e.ticker == ticker);
+              }
+            });
           },
         ),
       ),
@@ -99,6 +145,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final hasItems = _activeSections.isNotEmpty;
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: SafeArea(
@@ -109,35 +156,51 @@ class _HomeScreenState extends State<HomeScreen> {
               child: RefreshIndicator(
                 color: AppColors.green,
                 onRefresh: _refreshPrices,
-                child: _items.isEmpty
-                    ? _buildEmpty()
-                    : ReorderableListView.builder(
-                        buildDefaultDragHandles: false,
-                        padding: const EdgeInsets.only(bottom: 8),
-                        onReorder: _reorder,
-                        proxyDecorator: (child, _, __) =>
-                            Material(color: Colors.transparent, child: child),
-                        itemCount: _items.length,
-                        itemBuilder: (_, i) {
-                          final item = _items[i];
-                          final showSection = i == 0 ||
-                              _items[i - 1].section != item.section;
-                          return _WatchRow(
-                            key: ValueKey(item.id),
-                            item: item,
-                            index: i,
-                            showSection: showSection,
-                            onRemove: () => _remove(item.id),
-                            onTap: () => _openMiniChart(item),
-                          );
-                        },
-                      ),
+                child: hasItems ? _buildList() : _buildEmpty(),
               ),
             ),
             _buildAddButton(),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildList() {
+    return CustomScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      slivers: [
+        for (final section in _activeSections) ...[
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
+              child: Text(section,
+                  style: const TextStyle(
+                      color: AppColors.gray,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5)),
+            ),
+          ),
+          SliverReorderableList(
+            itemCount: _sections[section]!.length,
+            proxyDecorator: (child, _, __) =>
+                Material(color: Colors.transparent, child: child),
+            onReorderItem: (old, neu) => _reorderSection(section, old, neu),
+            itemBuilder: (_, i) {
+              final item = _sections[section]![i];
+              return _WatchRow(
+                key: ValueKey(item.id),
+                item: item,
+                index: i,
+                onRemove: () => _remove(section, item.id),
+                onTap: () => _openMiniChart(item),
+              );
+            },
+          ),
+        ],
+        const SliverToBoxAdapter(child: SizedBox(height: 8)),
+      ],
     );
   }
 
@@ -152,10 +215,8 @@ class _HomeScreenState extends State<HomeScreen> {
           const Spacer(),
           if (_refreshing)
             const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                  color: AppColors.green, strokeWidth: 2),
+              width: 18, height: 18,
+              child: CircularProgressIndicator(color: AppColors.green, strokeWidth: 2),
             )
           else
             IconButton(
@@ -265,7 +326,6 @@ class _WItem {
 class _WatchRow extends StatelessWidget {
   final _WItem item;
   final int index;
-  final bool showSection;
   final VoidCallback onRemove;
   final VoidCallback onTap;
 
@@ -273,7 +333,6 @@ class _WatchRow extends StatelessWidget {
     super.key,
     required this.item,
     required this.index,
-    required this.showSection,
     required this.onRemove,
     required this.onTap,
   });
@@ -281,25 +340,14 @@ class _WatchRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        if (showSection)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
-            child: Text(item.section,
-                style: const TextStyle(
-                    color: AppColors.gray,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.5)),
-          ),
         Slidable(
           key: ValueKey('slide_${item.id}'),
           endActionPane: ActionPane(
             motion: const DrawerMotion(),
             extentRatio: 0.52,
             children: [
-              // 알림
               SlidableAction(
                 onPressed: (_) => _showAlertDialog(context),
                 backgroundColor: AppColors.yellow,
@@ -307,7 +355,6 @@ class _WatchRow extends StatelessWidget {
                 icon: Icons.notifications_outlined,
                 label: '알림',
               ),
-              // 순서 변경 (drag handle hint)
               SlidableAction(
                 onPressed: (_) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -323,7 +370,6 @@ class _WatchRow extends StatelessWidget {
                 icon: Icons.swap_vert,
                 label: '순서',
               ),
-              // 삭제
               SlidableAction(
                 onPressed: (_) => onRemove(),
                 backgroundColor: AppColors.red,
@@ -335,8 +381,7 @@ class _WatchRow extends StatelessWidget {
           ),
           child: _ItemTile(item: item, index: index, onTap: onTap),
         ),
-        const Divider(
-            height: 1, color: Color(0xFF252A34), indent: 72, endIndent: 16),
+        const Divider(height: 1, color: Color(0xFF252A34), indent: 72, endIndent: 16),
       ],
     );
   }
@@ -346,7 +391,8 @@ class _WatchRow extends StatelessWidget {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: AppColors.card,
-        title: Text('${item.name} 알림', style: const TextStyle(color: Colors.white, fontSize: 16)),
+        title: Text('${item.name} 알림',
+            style: const TextStyle(color: Colors.white, fontSize: 16)),
         content: const Text('가격 알림 기능은 자동매매 탭에서 설정할 수 있습니다.',
             style: TextStyle(color: AppColors.gray, fontSize: 14)),
         actions: [
@@ -389,8 +435,7 @@ class _ItemTile extends StatelessWidget {
           children: [
             // Avatar
             Container(
-              width: 42,
-              height: 42,
+              width: 42, height: 42,
               decoration: BoxDecoration(color: avatarColor, shape: BoxShape.circle),
               child: Center(
                 child: Text(label,
@@ -423,11 +468,12 @@ class _ItemTile extends StatelessWidget {
                         color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
                 Text('${item.change}  ${item.pct}',
-                    style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w500)),
+                    style: TextStyle(
+                        color: color, fontSize: 11, fontWeight: FontWeight.w500)),
               ],
             ),
             const SizedBox(width: 8),
-            // Drag handle
+            // Drag handle (section-scoped)
             ReorderableDragStartListener(
               index: index,
               child: const Icon(Icons.drag_handle, color: AppColors.gray, size: 18),

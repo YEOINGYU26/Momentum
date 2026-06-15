@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../../core/app_colors.dart';
 import '../../core/constants.dart';
 import '../../providers/chart_provider.dart';
+import '../../services/market_data_service.dart';
 import 'candle_chart.dart';
 
 class ChartScreen extends StatefulWidget {
@@ -22,8 +23,27 @@ class _ChartScreenState extends State<ChartScreen> {
   List<CandleData> _candles = [];
   bool _loading = false;
   CandleData? _crosshairCandle;
+  List<SymbolInfo> _suggestions = [];
 
-  static const _intervals = ['1분', '5분', '15분', '1시간', '1일', '1주'];
+  static const _intervals = ['1분', '5분', '15분', '1시간', '1일', '1주', '월봉', '1년봉', '전체'];
+  static const _intervalParams = {
+    '1분': '1m',
+    '5분': '5m',
+    '15분': '15m',
+    '1시간': '1h',
+    '1일': '1d',
+    '1주': '1w',
+    '월봉': '1mo',
+    '1년봉': '1y',
+    '전체': 'all',
+  };
+
+  static const _cryptoMarkets = {
+    'BTC': 'KRW-BTC', 'ETH': 'KRW-ETH', 'XRP': 'KRW-XRP',
+    'SOL': 'KRW-SOL', 'BNB': 'KRW-BNB', 'DOGE': 'KRW-DOGE', 'ADA': 'KRW-ADA',
+  };
+
+  bool get _isCrypto => _cryptoMarkets.containsKey(_currentTicker.toUpperCase());
 
   static const _quickPicks = [
     _Ticker('005930', '삼성전자'),
@@ -36,28 +56,35 @@ class _ChartScreenState extends State<ChartScreen> {
   @override
   void initState() {
     super.initState();
-    SchedulerBinding.instance
-        .addPostFrameCallback((_) => _fetchCandles());
+    _searchCtrl.addListener(_onSearchChanged);
+    SchedulerBinding.instance.addPostFrameCallback((_) => _fetchCandles());
+  }
+
+  void _onSearchChanged() {
+    final q = _searchCtrl.text.trim();
+    if (q.isEmpty) {
+      setState(() => _suggestions = []);
+      return;
+    }
+    setState(() => _suggestions = SymbolDatabase.search(q, '전체').take(6).toList());
+  }
+
+  void _selectSymbol(SymbolInfo s) {
+    context.read<ChartProvider>().setTicker(s.ticker);
+    _searchCtrl.clear();
+    setState(() => _suggestions = []);
+    FocusScope.of(context).unfocus();
   }
 
   Future<void> _fetchCandles() async {
     if (!mounted) return;
     setState(() => _loading = true);
     try {
-      final res = await http
-          .get(Uri.parse(
-              '$kBaseUrl/api/v1/market/ohlcv/$_currentTicker'))
-          .timeout(const Duration(seconds: 5));
+      final candles = _isCrypto
+          ? await _fetchUpbitCandles()
+          : await _fetchKisCandles();
       if (!mounted) return;
-      if (res.statusCode == 200) {
-        final raw = jsonDecode(res.body) as List;
-        final parsed = raw
-            .map((d) => CandleData.fromJson(d as Map<String, dynamic>))
-            .where((c) => c.time > 0)
-            .toList()
-          ..sort((a, b) => a.time.compareTo(b.time));
-        setState(() => _candles = parsed.isNotEmpty ? parsed : _demoCandles());
-      }
+      setState(() => _candles = candles.isNotEmpty ? candles : _demoCandles());
     } catch (_) {
       if (mounted && _candles.isEmpty) {
         setState(() => _candles = _demoCandles());
@@ -67,6 +94,80 @@ class _ChartScreenState extends State<ChartScreen> {
     }
   }
 
+  Future<List<CandleData>> _fetchKisCandles() async {
+    final interval = _intervalParams[_selectedInterval] ?? '1d';
+    // '전체'/'1년봉' 은 페이지네이션으로 여러 번 호출하므로 타임아웃을 늘림
+    final isLong = interval == 'all' || interval == '1y';
+    final res = await http
+        .get(Uri.parse('$kBaseUrl/api/v1/market/ohlcv/$_currentTicker?interval=$interval'))
+        .timeout(Duration(seconds: isLong ? 30 : 8));
+    if (res.statusCode != 200) return [];
+    final raw = jsonDecode(res.body) as List;
+    return raw
+        .map((d) => CandleData.fromJson(d as Map<String, dynamic>))
+        .where((c) => c.time > 0)
+        .toList()
+      ..sort((a, b) => a.time.compareTo(b.time));
+  }
+
+  Future<List<CandleData>> _fetchUpbitCandles() async {
+    final market = _cryptoMarkets[_currentTicker.toUpperCase()]!;
+    String endpoint;
+    int count;
+    switch (_selectedInterval) {
+      case '1분':   endpoint = 'minutes/1';  count = 200; break;
+      case '5분':   endpoint = 'minutes/5';  count = 200; break;
+      case '15분':  endpoint = 'minutes/15'; count = 200; break;
+      case '1시간': endpoint = 'minutes/60'; count = 200; break;
+      case '1주':   endpoint = 'weeks';      count = 200; break;
+      case '월봉':  endpoint = 'months';     count = 200; break;
+      case '1년봉': endpoint = 'months';     count = 200; break;
+      case '전체':  endpoint = 'days';       count = 200; break;
+      case '1일':
+      default:      endpoint = 'days';       count = 200; break;
+    }
+    final res = await http
+        .get(Uri.parse('https://api.upbit.com/v1/candles/$endpoint?market=$market&count=$count'))
+        .timeout(const Duration(seconds: 8));
+    if (res.statusCode != 200) return [];
+    final List raw = jsonDecode(res.body);
+    var candles = raw.map((d) => CandleData(
+      time: DateTime.parse(d['candle_date_time_utc'] as String).millisecondsSinceEpoch ~/ 1000,
+      open: (d['opening_price'] as num).toDouble(),
+      high: (d['high_price'] as num).toDouble(),
+      low: (d['low_price'] as num).toDouble(),
+      close: (d['trade_price'] as num).toDouble(),
+      volume: (d['candle_acc_trade_volume'] as num).toDouble(),
+    )).toList()..sort((a, b) => a.time.compareTo(b.time));
+
+    // '1년봉' for crypto: aggregate monthly → yearly
+    if (_selectedInterval == '1년봉') {
+      candles = _aggregateToYearly(candles);
+    }
+    return candles;
+  }
+
+  List<CandleData> _aggregateToYearly(List<CandleData> monthly) {
+    final byYear = <int, List<CandleData>>{};
+    for (final c in monthly) {
+      final year = DateTime.fromMillisecondsSinceEpoch(c.time * 1000).year;
+      byYear.putIfAbsent(year, () => []).add(c);
+    }
+    final result = <CandleData>[];
+    for (final year in byYear.keys.toList()..sort()) {
+      final cs = byYear[year]!;
+      result.add(CandleData(
+        time: DateTime(year, 1, 1).millisecondsSinceEpoch ~/ 1000,
+        open: cs.first.open,
+        high: cs.map((c) => c.high).reduce((a, b) => a > b ? a : b),
+        low: cs.map((c) => c.low).reduce((a, b) => a < b ? a : b),
+        close: cs.last.close,
+        volume: cs.fold(0.0, (s, c) => s + c.volume),
+      ));
+    }
+    return result;
+  }
+
   List<CandleData> _demoCandles() {
     final now = DateTime.now();
     final candles = <CandleData>[];
@@ -74,13 +175,10 @@ class _ChartScreenState extends State<ChartScreen> {
     for (int i = 200; i >= 0; i--) {
       final t = now.subtract(Duration(days: i));
       final open = price;
-      price += (i % 3 == 0 ? 1 : -1) * price * 0.015 *
-          (0.5 + (i * 7 % 10) / 10);
+      price += (i % 3 == 0 ? 1 : -1) * price * 0.015 * (0.5 + (i * 7 % 10) / 10);
       final close = price;
-      final high = [open, close].reduce((a, b) => a > b ? a : b) *
-          (1 + (i % 5) * 0.002);
-      final low = [open, close].reduce((a, b) => a < b ? a : b) *
-          (1 - (i % 4) * 0.002);
+      final high = [open, close].reduce((a, b) => a > b ? a : b) * (1 + (i % 5) * 0.002);
+      final low = [open, close].reduce((a, b) => a < b ? a : b) * (1 - (i % 4) * 0.002);
       candles.add(CandleData(
         time: t.millisecondsSinceEpoch ~/ 1000,
         open: open,
@@ -115,8 +213,12 @@ class _ChartScreenState extends State<ChartScreen> {
           children: [
             _buildHeader(),
             _buildSearchBar(),
-            _buildQuickPicks(),
-            const SizedBox(height: 8),
+            if (_suggestions.isNotEmpty)
+              _buildSuggestions()
+            else ...[
+              _buildQuickPicks(),
+              const SizedBox(height: 8),
+            ],
             _buildIntervalBar(),
             if (_crosshairCandle != null) _buildLegend(_crosshairCandle!),
             Expanded(child: _buildChart()),
@@ -133,16 +235,13 @@ class _ChartScreenState extends State<ChartScreen> {
         children: [
           const Text('차트',
               style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold)),
+                  color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
           const Spacer(),
           if (_loading)
             const SizedBox(
               width: 14,
               height: 14,
-              child: CircularProgressIndicator(
-                  color: AppColors.green, strokeWidth: 2),
+              child: CircularProgressIndicator(color: AppColors.green, strokeWidth: 2),
             ),
           const SizedBox(width: 8),
           Container(
@@ -153,9 +252,7 @@ class _ChartScreenState extends State<ChartScreen> {
             ),
             child: Text(_currentTicker,
                 style: const TextStyle(
-                    color: AppColors.green,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600)),
+                    color: AppColors.green, fontSize: 13, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -178,25 +275,103 @@ class _ChartScreenState extends State<ChartScreen> {
               child: TextField(
                 controller: _searchCtrl,
                 style: const TextStyle(color: Colors.white, fontSize: 14),
-                textCapitalization: TextCapitalization.characters,
                 decoration: const InputDecoration(
-                  hintText: '종목 코드 검색...',
+                  hintText: '종목명 또는 코드 검색...',
                   hintStyle: TextStyle(color: AppColors.gray),
                   border: InputBorder.none,
                   isDense: true,
                 ),
                 onSubmitted: (v) {
-                  if (v.trim().isNotEmpty) {
-                    context
-                        .read<ChartProvider>()
-                        .setTicker(v.trim().toUpperCase());
+                  final q = v.trim();
+                  if (q.isEmpty) return;
+                  if (_suggestions.isNotEmpty) {
+                    _selectSymbol(_suggestions.first);
+                  } else {
+                    context.read<ChartProvider>().setTicker(q.toUpperCase());
                     _searchCtrl.clear();
                   }
                 },
               ),
             ),
+            if (_suggestions.isNotEmpty)
+              GestureDetector(
+                onTap: () {
+                  _searchCtrl.clear();
+                  FocusScope.of(context).unfocus();
+                },
+                child: const Icon(Icons.close, color: AppColors.gray, size: 18),
+              ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSuggestions() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: _suggestions.asMap().entries.map((entry) {
+          final i = entry.key;
+          final s = entry.value;
+          BorderRadius radius = BorderRadius.zero;
+          if (_suggestions.length == 1) {
+            radius = BorderRadius.circular(12);
+          } else if (i == 0) {
+            radius = const BorderRadius.vertical(top: Radius.circular(12));
+          } else if (i == _suggestions.length - 1) {
+            radius = const BorderRadius.vertical(bottom: Radius.circular(12));
+          }
+          return Column(
+            children: [
+              if (i > 0)
+                const Divider(height: 1, color: Color(0xFF252A34), indent: 16, endIndent: 16),
+              InkWell(
+                onTap: () => _selectSymbol(s),
+                borderRadius: radius,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(s.name,
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500)),
+                            const SizedBox(height: 2),
+                            Text(s.sub,
+                                style: const TextStyle(color: AppColors.gray, fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(s.ticker,
+                              style: const TextStyle(
+                                  color: AppColors.green,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 2),
+                          Text(s.exchange,
+                              style: const TextStyle(color: AppColors.gray, fontSize: 10)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        }).toList(),
       ),
     );
   }
@@ -208,19 +383,16 @@ class _ChartScreenState extends State<ChartScreen> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 20),
         itemCount: _quickPicks.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, i) {
           final t = _quickPicks[i];
           final sel = _currentTicker == t.code;
           return GestureDetector(
             onTap: () => context.read<ChartProvider>().setTicker(t.code),
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               decoration: BoxDecoration(
-                color: sel
-                    ? AppColors.green.withValues(alpha: 0.15)
-                    : AppColors.card,
+                color: sel ? AppColors.green.withValues(alpha: 0.15) : AppColors.card,
                 borderRadius: BorderRadius.circular(8),
                 border: sel
                     ? Border.all(color: AppColors.green.withValues(alpha: 0.5))
@@ -245,7 +417,7 @@ class _ChartScreenState extends State<ChartScreen> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 20),
         itemCount: _intervals.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 4),
+        separatorBuilder: (_, __) => const SizedBox(width: 4),
         itemBuilder: (_, i) {
           final iv = _intervals[i];
           final sel = _selectedInterval == iv;
@@ -255,8 +427,7 @@ class _ChartScreenState extends State<ChartScreen> {
               _fetchCandles();
             },
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
                 color: sel ? AppColors.green : Colors.transparent,
                 borderRadius: BorderRadius.circular(6),
@@ -326,8 +497,7 @@ class _ChartScreenState extends State<ChartScreen> {
                   const Icon(Icons.bar_chart, color: AppColors.gray, size: 48),
                   const SizedBox(height: 12),
                   const Text('백엔드 서버를 시작하세요',
-                      style:
-                          TextStyle(color: AppColors.gray, fontSize: 14)),
+                      style: TextStyle(color: AppColors.gray, fontSize: 14)),
                   const SizedBox(height: 8),
                   TextButton(
                     onPressed: _fetchCandles,
