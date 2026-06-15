@@ -136,7 +136,7 @@ class _ChartScreenState extends State<ChartScreen> {
     final isLong = interval == 'all' || interval == '1y';
     final res = await http
         .get(Uri.parse('$kBaseUrl/api/v1/market/ohlcv/$_currentTicker?interval=$interval'))
-        .timeout(Duration(seconds: isLong ? 30 : 8));
+        .timeout(Duration(seconds: isLong ? 120 : 8));
     if (res.statusCode != 200) return [];
     final raw = jsonDecode(res.body) as List;
     return raw
@@ -448,33 +448,46 @@ class _ChartScreenState extends State<ChartScreen> {
   Widget _buildIntervalBar() {
     return SizedBox(
       height: 32,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        itemCount: _intervals.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 4),
-        itemBuilder: (_, i) {
-          final iv = _intervals[i];
-          final sel = _selectedInterval == iv;
-          return GestureDetector(
-            onTap: () {
-              setState(() => _selectedInterval = iv);
-              _fetchCandles();
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: sel ? AppColors.green : Colors.transparent,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(iv,
-                  style: TextStyle(
-                      color: sel ? AppColors.bg : AppColors.gray,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600)),
+      child: Row(
+        children: [
+          // 스크롤 가능한 봉 선택 버튼
+          Expanded(
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(left: 20),
+              itemCount: _intervals.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 4),
+              itemBuilder: (_, i) {
+                final iv = _intervals[i];
+                final sel = _selectedInterval == iv;
+                return GestureDetector(
+                  onTap: () {
+                    setState(() => _selectedInterval = iv);
+                    _fetchCandles();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: sel ? AppColors.green : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(iv,
+                        style: TextStyle(
+                            color: sel ? AppColors.bg : AppColors.gray,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                );
+              },
             ),
-          );
-        },
+          ),
+          // 통화 단위 드롭다운 (암호화폐 제외)
+          if (!_isCrypto) ...[
+            const SizedBox(width: 6),
+            _buildCurrencyDropdown(),
+            const SizedBox(width: 12),
+          ],
+        ],
       ),
     );
   }
@@ -550,25 +563,12 @@ class _ChartScreenState extends State<ChartScreen> {
       );
     }
 
-    return Stack(
-      children: [
-        // 차트 영역 클립 — 줌 시 위아래로 삐져나오지 않도록
-        ClipRect(
-          child: CandleChart(
-            candles: _displayCandles,
-            pricePrefix: _pricePrefix,
-            onCrosshair: (c) => setState(() => _crosshairCandle = c),
-          ),
-        ),
-        // Y축(가격축) 바로 위 통화 드롭다운
-        if (!_isCrypto)
-          Positioned(
-            top: 0,
-            right: 0,
-            width: 60,
-            child: _buildCurrencyDropdown(),
-          ),
-      ],
+    return ClipRect(
+      child: CandleChart(
+        candles: _displayCandles,
+        pricePrefix: _pricePrefix,
+        onCrosshair: (c) => setState(() => _crosshairCandle = c),
+      ),
     );
   }
 
@@ -576,7 +576,7 @@ class _ChartScreenState extends State<ChartScreen> {
     return PopupMenuButton<String>(
       initialValue: _currency,
       padding: EdgeInsets.zero,
-      offset: const Offset(0, 26),
+      offset: const Offset(0, 34),
       color: const Color(0xFF1E2330),
       onSelected: (val) {
         setState(() => _currency = val);
@@ -595,22 +595,17 @@ class _ChartScreenState extends State<ChartScreen> {
         ),
       ],
       child: Container(
-        height: 24,
-        alignment: Alignment.center,
-        margin: const EdgeInsets.only(top: 2, right: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: const Color(0xFF1E2330),
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: const Color(0xFF2E3340)),
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(6),
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              _currency,
-              style: const TextStyle(
-                  color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
-            ),
+            Text(_currency,
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
             const Icon(Icons.arrow_drop_down, color: AppColors.gray, size: 14),
           ],
         ),
