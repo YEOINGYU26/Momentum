@@ -63,16 +63,16 @@ class MarketAPI:
         all_rows: list[dict] = []
         seen: set[str] = set()
         end = date.today()
-        max_pages = {"D": 10, "W": 5, "M": 3}.get(period, 5)
+        # 일봉: 최대 100콜(100×100=10,000 거래일≈40년), 주봉/월봉: 더 적게
+        max_pages = {"D": 100, "W": 30, "M": 10}.get(period, 50)
 
         for _ in range(max_pages):
-            start_dt = max(end - timedelta(days=3650), date(1990, 1, 1))
             params = {
                 "fid_cond_mrkt_div_code": "J",
                 "fid_input_iscd": ticker,
                 "fid_period_div_code": period,
                 "fid_org_adj_prc": "0",
-                "fid_input_date_1": start_dt.strftime("%Y%m%d"),
+                "fid_input_date_1": "19000101",   # 항상 아주 먼 과거로 고정
                 "fid_input_date_2": end.strftime("%Y%m%d"),
             }
             try:
@@ -88,23 +88,32 @@ class MarketAPI:
             if not rows:
                 break
 
+            batch_dates: list[str] = []
             new = 0
             for r in rows:
                 d_str = r.get("stck_bsop_date", "")
-                if d_str and d_str not in seen:
+                if not d_str or len(d_str) != 8:
+                    continue
+                batch_dates.append(d_str)
+                if d_str not in seen:
                     seen.add(d_str)
                     all_rows.append(r)
                     new += 1
 
-            if new == 0:
+            if new == 0 or not batch_dates:
                 break
 
-            oldest_str = rows[-1].get("stck_bsop_date", "")
-            if not oldest_str or len(oldest_str) != 8:
+            # min(batch_dates) = 이번 배치에서 가장 오래된 날짜
+            # rows 정렬 방향(오름/내림차순)에 무관하게 안전하게 처리
+            oldest_str = min(batch_dates)
+            try:
+                oldest = date(
+                    int(oldest_str[:4]), int(oldest_str[4:6]), int(oldest_str[6:8])
+                )
+            except ValueError:
                 break
-            oldest = date(int(oldest_str[:4]), int(oldest_str[4:6]), int(oldest_str[6:8]))
             end = oldest - timedelta(days=1)
-            if end < date(1990, 1, 1):
+            if end < date(1960, 1, 1):
                 break
 
         all_rows.sort(key=lambda r: r.get("stck_bsop_date", ""))

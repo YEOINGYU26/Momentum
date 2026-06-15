@@ -21,14 +21,21 @@ class CandleData {
       return double.tryParse(v?.toString() ?? '') ?? 0;
     }
     int t = 0;
-    final ds = (j['stck_bsop_date'] ?? j['date'])?.toString() ?? '';
-    if (ds.length == 8) {
+    // datetime: YYYYMMDDHHMMSS (분봉), date/stck_bsop_date: YYYYMMDD (일봉)
+    final ds = (j['datetime'] ?? j['stck_bsop_date'] ?? j['date'])?.toString() ?? '';
+    if (ds.length >= 8) {
       try {
-        t = DateTime.utc(
-          int.parse(ds.substring(0, 4)),
-          int.parse(ds.substring(4, 6)),
-          int.parse(ds.substring(6, 8)),
-        ).millisecondsSinceEpoch ~/ 1000;
+        final year = int.parse(ds.substring(0, 4));
+        final month = int.parse(ds.substring(4, 6));
+        final day = int.parse(ds.substring(6, 8));
+        int hour = 0, minute = 0, second = 0;
+        if (ds.length >= 14) {
+          hour = int.parse(ds.substring(8, 10));
+          minute = int.parse(ds.substring(10, 12));
+          second = int.parse(ds.substring(12, 14));
+        }
+        t = DateTime.utc(year, month, day, hour, minute, second)
+            .millisecondsSinceEpoch ~/ 1000;
       } catch (_) {}
     }
     return CandleData(
@@ -36,8 +43,8 @@ class CandleData {
       open: p(j['stck_oprc'] ?? j['open']),
       high: p(j['stck_hgpr'] ?? j['high']),
       low: p(j['stck_lwpr'] ?? j['low']),
-      close: p(j['stck_clpr'] ?? j['close']),
-      volume: p(j['acml_vol'] ?? j['volume']),
+      close: p(j['stck_clpr'] ?? j['close'] ?? j['stck_prpr']),
+      volume: p(j['acml_vol'] ?? j['volume'] ?? j['cntg_vol']),
     );
   }
 }
@@ -45,8 +52,14 @@ class CandleData {
 class CandleChart extends StatefulWidget {
   final List<CandleData> candles;
   final void Function(CandleData?)? onCrosshair;
+  final String pricePrefix;
 
-  const CandleChart({super.key, required this.candles, this.onCrosshair});
+  const CandleChart({
+    super.key,
+    required this.candles,
+    this.onCrosshair,
+    this.pricePrefix = '',
+  });
 
   @override
   State<CandleChart> createState() => _CandleChartState();
@@ -187,6 +200,7 @@ class _CandleChartState extends State<CandleChart> {
             scrollOffset: _scrollOffset,
             priceZoom: _priceZoom,
             crosshairPos: _crosshairPos,
+            pricePrefix: widget.pricePrefix,
           ),
         ),
       );
@@ -217,6 +231,7 @@ class _Painter extends CustomPainter {
   final double scrollOffset;
   final double priceZoom;
   final Offset? crosshairPos;
+  final String pricePrefix;
 
   static const _priceAxisW = 58.0;
   static const _timeAxisH = 26.0;
@@ -228,6 +243,7 @@ class _Painter extends CustomPainter {
     required this.scrollOffset,
     required this.priceZoom,
     required this.crosshairPos,
+    this.pricePrefix = '',
   });
 
   @override
@@ -325,13 +341,21 @@ class _Painter extends CustomPainter {
     }
 
     // ── Time axis ───────────────────────────────────────────────────
+    // 분봉/일봉 자동 감지: 연속 캔들 간격이 2시간 미만이면 분봉
+    final isIntraday = vis.length >= 2 &&
+        (vis.last.time - vis.first.time) < 7200;
+    String _timeFmt(int unixSec) {
+      final dt = DateTime.fromMillisecondsSinceEpoch(unixSec * 1000, isUtc: true);
+      if (isIntraday) {
+        return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+      }
+      return '${dt.month}/${dt.day}';
+    }
     final step = math.max(1, (vis.length / 5).round());
     for (var i = 0; i < vis.length; i += step) {
       final x = (rightPad + i + 0.5) * candleW;
-      final dt = DateTime.fromMillisecondsSinceEpoch(
-          vis[i].time * 1000, isUtc: true);
       tp.text = TextSpan(
-          text: '${dt.month}/${dt.day}',
+          text: _timeFmt(vis[i].time),
           style: const TextStyle(color: AppColors.gray, fontSize: 10));
       tp.layout();
       if (x + tp.width / 2 < chartW) {
@@ -363,13 +387,11 @@ class _Painter extends CustomPainter {
       }
 
       // Time label at bottom
-      final dt = DateTime.fromMillisecondsSinceEpoch(
-          c.time * 1000, isUtc: true);
-      _axisLabel(
-        canvas, sx, usableH + 4,
-        '${dt.year}/${dt.month.toString().padLeft(2, '0')}/${dt.day.toString().padLeft(2, '0')}',
-        center: true,
-      );
+      final dtc = DateTime.fromMillisecondsSinceEpoch(c.time * 1000, isUtc: true);
+      final crossLabel = isIntraday
+          ? '${dtc.hour.toString().padLeft(2, '0')}:${dtc.minute.toString().padLeft(2, '0')}'
+          : '${dtc.year}/${dtc.month.toString().padLeft(2, '0')}/${dtc.day.toString().padLeft(2, '0')}';
+      _axisLabel(canvas, sx, usableH + 4, crossLabel, center: true);
     }
   }
 
@@ -412,14 +434,18 @@ class _Painter extends CustomPainter {
   }
 
   String _fmt(double p) {
-    if (p >= 1e6) return '${(p / 1e6).toStringAsFixed(2)}M';
-    if (p >= 1000) {
-      return p
-          .toStringAsFixed(0)
+    final String n;
+    if (p >= 1e6) {
+      n = '${(p / 1e6).toStringAsFixed(2)}M';
+    } else if (p >= 1000) {
+      n = p.toStringAsFixed(0)
           .replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');
+    } else if (p < 1) {
+      n = p.toStringAsFixed(4);
+    } else {
+      n = p.toStringAsFixed(2);
     }
-    if (p < 1) return p.toStringAsFixed(4);
-    return p.toStringAsFixed(2);
+    return '$pricePrefix$n';
   }
 
   @override

@@ -25,6 +25,10 @@ class _ChartScreenState extends State<ChartScreen> {
   CandleData? _crosshairCandle;
   List<SymbolInfo> _suggestions = [];
 
+  // 통화 토글
+  String _currency = 'KRW';
+  double _usdRate = 0.0;  // 1 KRW → USD 환율
+
   static const _intervals = ['1분', '5분', '15분', '1시간', '1일', '1주', '월봉', '1년봉', '전체'];
   static const _intervalParams = {
     '1분': '1m',
@@ -58,7 +62,39 @@ class _ChartScreenState extends State<ChartScreen> {
     super.initState();
     _searchCtrl.addListener(_onSearchChanged);
     SchedulerBinding.instance.addPostFrameCallback((_) => _fetchCandles());
+    _fetchUsdRate();
   }
+
+  Future<void> _fetchUsdRate() async {
+    try {
+      final res = await http.get(
+        Uri.parse('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/krw.json'),
+      ).timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        final rate = (data['krw']?['usd'] as num?)?.toDouble() ?? 0.0;
+        if (mounted && rate > 0) setState(() => _usdRate = rate);
+      }
+    } catch (_) {}
+  }
+
+  bool get _isKoreanStock => RegExp(r'^\d{6}$').hasMatch(_currentTicker);
+
+  List<CandleData> get _displayCandles {
+    if (_currency == 'USD' && _usdRate > 0) {
+      return _candles.map((c) => CandleData(
+        time: c.time,
+        open:   c.open   * _usdRate,
+        high:   c.high   * _usdRate,
+        low:    c.low    * _usdRate,
+        close:  c.close  * _usdRate,
+        volume: c.volume,
+      )).toList();
+    }
+    return _candles;
+  }
+
+  String get _pricePrefix => _currency == 'USD' ? '\$' : '';
 
   void _onSearchChanged() {
     final q = _searchCtrl.text.trim();
@@ -239,11 +275,44 @@ class _ChartScreenState extends State<ChartScreen> {
           const Spacer(),
           if (_loading)
             const SizedBox(
-              width: 14,
-              height: 14,
+              width: 14, height: 14,
               child: CircularProgressIndicator(color: AppColors.green, strokeWidth: 2),
             ),
           const SizedBox(width: 8),
+          // 통화 토글 (암호화폐 제외)
+          if (!_isCrypto) ...[
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  _currency = _currency == 'KRW' ? 'USD' : 'KRW';
+                });
+                if (_usdRate == 0) _fetchUsdRate();
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('₩',
+                        style: TextStyle(
+                          color: _currency == 'KRW' ? Colors.white : AppColors.gray,
+                          fontSize: 13, fontWeight: FontWeight.bold)),
+                    const Text(' / ',
+                        style: TextStyle(color: AppColors.gray, fontSize: 11)),
+                    Text('\$',
+                        style: TextStyle(
+                          color: _currency == 'USD' ? Colors.white : AppColors.gray,
+                          fontSize: 13, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
@@ -445,30 +514,36 @@ class _ChartScreenState extends State<ChartScreen> {
   }
 
   Widget _buildLegend(CandleData c) {
+    final mult = (_currency == 'USD' && _usdRate > 0) ? _usdRate : 1.0;
     final isUp = c.close >= c.open;
     final col = isUp ? AppColors.green : AppColors.red;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 6, 20, 2),
       child: Row(children: [
-        _lg('O', c.open),
+        _lg('O', c.open  * mult),
         const SizedBox(width: 14),
-        _lg('H', c.high, AppColors.green),
+        _lg('H', c.high  * mult, AppColors.green),
         const SizedBox(width: 14),
-        _lg('L', c.low, AppColors.red),
+        _lg('L', c.low   * mult, AppColors.red),
         const SizedBox(width: 14),
-        _lg('C', c.close, col),
+        _lg('C', c.close * mult, col),
       ]),
     );
   }
 
   Widget _lg(String label, double value, [Color? color]) {
     String fmt(double v) {
+      final pfx = _pricePrefix;
+      final String n;
       if (v >= 1000) {
-        return v.toStringAsFixed(0).replaceAllMapped(
+        n = v.toStringAsFixed(0).replaceAllMapped(
             RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');
+      } else if (v < 1) {
+        n = v.toStringAsFixed(4);
+      } else {
+        n = v.toStringAsFixed(2);
       }
-      if (v < 1) return v.toStringAsFixed(4);
-      return v.toStringAsFixed(2);
+      return '$pfx$n';
     }
 
     return RichText(
@@ -510,7 +585,8 @@ class _ChartScreenState extends State<ChartScreen> {
     }
 
     return CandleChart(
-      candles: _candles,
+      candles: _displayCandles,
+      pricePrefix: _pricePrefix,
       onCrosshair: (c) => setState(() => _crosshairCandle = c),
     );
   }
