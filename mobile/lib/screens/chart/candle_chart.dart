@@ -250,6 +250,10 @@ class _Painter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (candles.isEmpty) return;
 
+    // 차트 영역 밖으로 캔들이 삐져나오지 않도록 클립
+    canvas.save();
+    canvas.clipRect(Offset.zero & size);
+
     final chartW = size.width - _priceAxisW;
     final usableH = size.height - _timeAxisH;
     final priceH = usableH * (1 - _volRatio);
@@ -393,6 +397,7 @@ class _Painter extends CustomPainter {
           : '${dtc.year}/${dtc.month.toString().padLeft(2, '0')}/${dtc.day.toString().padLeft(2, '0')}';
       _axisLabel(canvas, sx, usableH + 4, crossLabel, center: true);
     }
+    canvas.restore();
   }
 
   void _dashed(Canvas canvas, Offset p1, Offset p2, Paint paint,
@@ -454,5 +459,6 @@ class _Painter extends CustomPainter {
       visibleCount != old.visibleCount ||
       scrollOffset != old.scrollOffset ||
       priceZoom != old.priceZoom ||
-      crosshairPos != old.crosshairPos;
+      crosshairPos != old.crosshairPos ||
+      pricePrefix != old.pricePrefix;
 }

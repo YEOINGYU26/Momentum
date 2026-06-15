@@ -279,40 +279,6 @@ class _ChartScreenState extends State<ChartScreen> {
               child: CircularProgressIndicator(color: AppColors.green, strokeWidth: 2),
             ),
           const SizedBox(width: 8),
-          // 통화 토글 (암호화폐 제외)
-          if (!_isCrypto) ...[
-            GestureDetector(
-              onTap: () {
-                setState(() {
-                  _currency = _currency == 'KRW' ? 'USD' : 'KRW';
-                });
-                if (_usdRate == 0) _fetchUsdRate();
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppColors.card,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('₩',
-                        style: TextStyle(
-                          color: _currency == 'KRW' ? Colors.white : AppColors.gray,
-                          fontSize: 13, fontWeight: FontWeight.bold)),
-                    const Text(' / ',
-                        style: TextStyle(color: AppColors.gray, fontSize: 11)),
-                    Text('\$',
-                        style: TextStyle(
-                          color: _currency == 'USD' ? Colors.white : AppColors.gray,
-                          fontSize: 13, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-          ],
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
@@ -584,10 +550,71 @@ class _ChartScreenState extends State<ChartScreen> {
       );
     }
 
-    return CandleChart(
-      candles: _displayCandles,
-      pricePrefix: _pricePrefix,
-      onCrosshair: (c) => setState(() => _crosshairCandle = c),
+    return Stack(
+      children: [
+        // 차트 영역 클립 — 줌 시 위아래로 삐져나오지 않도록
+        ClipRect(
+          child: CandleChart(
+            candles: _displayCandles,
+            pricePrefix: _pricePrefix,
+            onCrosshair: (c) => setState(() => _crosshairCandle = c),
+          ),
+        ),
+        // Y축(가격축) 바로 위 통화 드롭다운
+        if (!_isCrypto)
+          Positioned(
+            top: 0,
+            right: 0,
+            width: 60,
+            child: _buildCurrencyDropdown(),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildCurrencyDropdown() {
+    return PopupMenuButton<String>(
+      initialValue: _currency,
+      padding: EdgeInsets.zero,
+      offset: const Offset(0, 26),
+      color: const Color(0xFF1E2330),
+      onSelected: (val) {
+        setState(() => _currency = val);
+        if (val == 'USD' && _usdRate == 0) _fetchUsdRate();
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(
+          value: 'KRW',
+          height: 36,
+          child: Text('₩  KRW', style: TextStyle(color: Colors.white, fontSize: 13)),
+        ),
+        PopupMenuItem(
+          value: 'USD',
+          height: 36,
+          child: Text('\$  USD', style: TextStyle(color: Colors.white, fontSize: 13)),
+        ),
+      ],
+      child: Container(
+        height: 24,
+        alignment: Alignment.center,
+        margin: const EdgeInsets.only(top: 2, right: 2),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E2330),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: const Color(0xFF2E3340)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              _currency,
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+            ),
+            const Icon(Icons.arrow_drop_down, color: AppColors.gray, size: 14),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     kis_app_secret: str = ""
     kis_account_no: str = ""
     kis_account_product_code: str = "01"
-    kis_is_mock: bool = True
+    kis_is_mock: bool = False
 
     # FCM 네이티브 푸시
     fcm_credentials_path: str = ""  # Firebase 서비스 계정 JSON 경로
