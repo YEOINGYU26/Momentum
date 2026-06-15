@@ -78,11 +78,16 @@ class _ChartScreenState extends State<ChartScreen> {
     } catch (_) {}
   }
 
-  bool get _isKoreanStock => RegExp(r'^\d{6}$').hasMatch(_currentTicker);
-
   List<CandleData> get _displayCandles {
+    List<CandleData> candles = _candles;
+
+    // 전체봉: 일봉 300개 초과 시 연봉으로 자동 집계 (한눈에 볼 수 있도록)
+    if (_selectedInterval == '전체' && candles.length > 300) {
+      candles = _aggregateToYearly(candles);
+    }
+
     if (_currency == 'USD' && _usdRate > 0) {
-      return _candles.map((c) => CandleData(
+      return candles.map((c) => CandleData(
         time: c.time,
         open:   c.open   * _usdRate,
         high:   c.high   * _usdRate,
@@ -91,7 +96,7 @@ class _ChartScreenState extends State<ChartScreen> {
         volume: c.volume,
       )).toList();
     }
-    return _candles;
+    return candles;
   }
 
   String get _pricePrefix => _currency == 'USD' ? '\$' : '';
@@ -135,7 +140,9 @@ class _ChartScreenState extends State<ChartScreen> {
     // '전체'/'1년봉' 은 페이지네이션으로 여러 번 호출하므로 타임아웃을 늘림
     // 타임아웃: all/1y=120s, 1d/1w/1mo=30s, 나머지=8s
     final timeout = const {
-      'all': 120, '1y': 60, '1d': 30, '1w': 30, '1mo': 20,
+      'all': 120, '1y': 60,
+      '1d': 30, '1w': 30, '1mo': 20,
+      '1m': 15, '5m': 20, '15m': 30, '1h': 30,
     };
     final res = await http
         .get(Uri.parse('$kBaseUrl/api/v1/market/ohlcv/$_currentTicker?interval=$interval'))
@@ -484,12 +491,9 @@ class _ChartScreenState extends State<ChartScreen> {
               },
             ),
           ),
-          // 통화 단위 드롭다운 (암호화폐 제외)
-          if (!_isCrypto) ...[
-            const SizedBox(width: 6),
-            _buildCurrencyDropdown(),
-            const SizedBox(width: 12),
-          ],
+          // 통화 단위 드롭다운: 가격축(58px) 폭에 맞춤
+          if (!_isCrypto)
+            SizedBox(width: 58, child: _buildCurrencyDropdown()),
         ],
       ),
     );
@@ -579,6 +583,7 @@ class _ChartScreenState extends State<ChartScreen> {
     return PopupMenuButton<String>(
       initialValue: _currency,
       padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
       offset: const Offset(0, 34),
       color: const Color(0xFF1E2330),
       onSelected: (val) {
@@ -598,18 +603,18 @@ class _ChartScreenState extends State<ChartScreen> {
         ),
       ],
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         decoration: BoxDecoration(
           color: AppColors.card,
           borderRadius: BorderRadius.circular(6),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(_currency,
                 style: const TextStyle(
-                    color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
-            const Icon(Icons.arrow_drop_down, color: AppColors.gray, size: 14),
+                    color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+            const Icon(Icons.arrow_drop_down, color: AppColors.gray, size: 13),
           ],
         ),
       ),

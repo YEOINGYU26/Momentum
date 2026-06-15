@@ -1,2 +1,2 @@
-const String kBaseUrl = 'http://localhost:8000';
-const String kWsBaseUrl = 'ws://localhost:8000';
+const String kBaseUrl = 'http://100.66.15.91:8000';
+const String kWsBaseUrl = 'ws://100.66.15.91:8000';

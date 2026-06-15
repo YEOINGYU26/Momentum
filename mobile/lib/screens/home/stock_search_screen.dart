@@ -23,12 +23,14 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
   final _focus = FocusNode();
   String _query = '';
   String _category = '전체';
+  late final Set<String> _addedTickers;
 
-  static const _categories = ['전체', '주식', '지수', '암호화폐', '외환'];
+  static const _categories = ['전체', '주식', '암호화폐', '해외주식'];
 
   @override
   void initState() {
     super.initState();
+    _addedTickers = Set.from(widget.alreadyAdded);
     _focus.requestFocus();
   }
 
@@ -41,7 +43,7 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
 
   List<SymbolInfo> get _results => SymbolDatabase.search(_query, _category);
 
-  bool _isAdded(String ticker) => widget.alreadyAdded.contains(ticker);
+  bool _isAdded(String ticker) => _addedTickers.contains(ticker);
 
   @override
   Widget build(BuildContext context) {
@@ -165,8 +167,10 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
           isAdded: added,
           onToggle: () {
             if (added) {
+              _addedTickers.remove(s.ticker);
               widget.onRemove(s.ticker);
             } else {
+              _addedTickers.add(s.ticker);
               widget.onAdd(s);
             }
             setState(() {});

@@ -147,10 +147,11 @@ class MarketAPI:
         return self._aggregate_candles(raw, interval_minutes)
 
     async def _fetch_1min_batch(self, ticker: str, calls: int = 1) -> list[dict]:
+        """여러 영업일에 걸쳐 1분봉 데이터를 순차 수집.
+        KIS API는 호출당 30개 레코드만 반환하므로 참조 시각을 순차적으로 롤백."""
         now = datetime.now()
-        today = now.strftime("%Y%m%d")
         ref = now if dtime(9, 0) <= now.time() <= dtime(15, 30) \
-              else now.replace(hour=15, minute=30, second=0, microsecond=0)
+              else datetime.combine(now.date(), dtime(15, 30))
 
         seen: set[str] = set()
         all_rows: list[dict] = []
@@ -176,12 +177,24 @@ class MarketAPI:
             if not rows:
                 break
 
+            date_str = ref.strftime("%Y%m%d")
+            ref_hhmmss = ref.strftime("%H%M%S")
             for r in rows:
                 key = r.get("stck_cntg_hour", "")
-                if key and key not in seen:
-                    seen.add(key)
+                if not key:
+                    continue
+                # 반환 시각이 기준 시각보다 크면 전 영업일 데이터
+                if key > ref_hhmmss:
+                    prev = ref.date() - timedelta(days=1)
+                    while prev.weekday() >= 5:
+                        prev -= timedelta(days=1)
+                    composite = prev.strftime("%Y%m%d") + key
+                else:
+                    composite = date_str + key
+                if composite not in seen:
+                    seen.add(composite)
                     all_rows.append({
-                        "datetime": today + key,
+                        "datetime": composite,
                         "open":   int(r.get("stck_oprc", 0) or 0),
                         "high":   int(r.get("stck_hgpr", 0) or 0),
                         "low":    int(r.get("stck_lwpr", 0) or 0),
@@ -191,9 +204,15 @@ class MarketAPI:
 
             oldest = rows[-1].get("stck_cntg_hour", "090000")
             h, m = int(oldest[:2]), int(oldest[2:4])
-            ref = ref.replace(hour=h, minute=m, second=0) - timedelta(minutes=1)
-            if ref.time() < dtime(9, 0):
-                break
+            new_ref = ref.replace(hour=h, minute=m, second=0) - timedelta(minutes=1)
+            if new_ref.time() < dtime(9, 0):
+                # 이전 영업일 장마감(15:30)으로 롤백
+                prev_date = ref.date() - timedelta(days=1)
+                while prev_date.weekday() >= 5:
+                    prev_date -= timedelta(days=1)
+                ref = datetime.combine(prev_date, dtime(15, 30))
+            else:
+                ref = new_ref
 
         all_rows.sort(key=lambda r: r["datetime"])
         return all_rows

@@ -32,9 +32,9 @@ class MiniChartSheet extends StatefulWidget {
 class _MiniChartSheetState extends State<MiniChartSheet> {
   List<double> _data = [];
   bool _loading = true;
-  String _range = '1달';
+  String _range = '1년';
 
-  static const _ranges = ['1날', '5날', '1달', '3달', 'YTD', '1해', '5해', '모두'];
+  static const _ranges = ['일봉', '주봉', '월봉', '1년', '5년', '모두'];
 
   @override
   void initState() {
@@ -44,7 +44,7 @@ class _MiniChartSheetState extends State<MiniChartSheet> {
 
   Future<void> _loadChart() async {
     setState(() => _loading = true);
-    final data = await MarketDataService.fetchOhlcv(widget.ticker);
+    final data = await MarketDataService.fetchOhlcvRange(widget.ticker, _range);
     if (mounted) setState(() { _data = data; _loading = false; });
   }
 
@@ -172,7 +172,10 @@ class _MiniChartSheetState extends State<MiniChartSheet> {
                 final r = _ranges[i];
                 final sel = _range == r;
                 return GestureDetector(
-                  onTap: () => setState(() => _range = r),
+                  onTap: () {
+                    setState(() => _range = r);
+                    _loadChart();
+                  },
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(

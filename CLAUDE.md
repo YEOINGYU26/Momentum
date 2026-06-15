@@ -206,9 +206,48 @@ FCM_CREDENTIALS_PATH=...        # Firebase 서비스 계정 JSON 경로 (선택)
 
 ## 캔들차트 (candle_chart.dart) 주요 기능
 - Flutter CustomPainter 기반 네이티브 구현 (WebView/TradingView 미사용)
-- 롱프레스 → 점선 크로스헤어 표시, 손 뗀 후 유지, 탭으로 해제
-- 크로스헤어 활성 시 어디서든 꾹 누르면 상대 위치로 이동
+- 롱프레스 → 점선 크로스헤어 표시, 손 뗀 후 유지, **탭 = 크로스헤어 이동** (해제 X)
+- 크로스헤어 활성 시 꾹 누르면 상대 위치로 이동
 - 슬라이드(패닝) 시 크로스헤어 자동 해제 + 차트 스크롤
 - 오른쪽 가격축 드래그 → 세로 줌 (exp 스케일)
 - 차트 영역 핀치 → 가로 줌 (visibleCount 조절)
 - 오른쪽 슬라이드 → 과거 데이터, 왼쪽 슬라이드 → 최신 데이터
+- 거래량 바 영역: 캔들이 절대 침범 불가 (`canvas.clipRect` 적용)
+
+## 차트 그리기 도구 (KAN-16, 진행 중)
+
+### 상태머신 (DrawPhase)
+- `idle` → 추세선 버튼 클릭 → `placingFirst`
+- `placingFirst` → 탭 → `placingSecond` (1번째 점 확정)
+- `placingSecond` → 탭 → 선 생성, `idle` 복귀
+- `idle` → 선 탭 선택 → `selected` (플로팅 툴바 표시) ← **다음 세션 완성 예정**
+
+### ChartLine 구조
+- `startTime/endTime` (Unix sec), `startPrice/endPrice`: 좌표 기반 → 스크롤/줌 불변
+- `color`, `width` (1-4px), `style` (solid/dashed/dotted)
+- `copyWith()` 패턴으로 불변 업데이트
+
+### 그리기 커서
+- 손가락 이동 시 초록 십자선 + 교차점 원(내부 채움 + 테두리) 표시
+- X축은 캔들에 스냅, Y축은 자유
+- 2번째 점 입력 시: 1번째 앵커 원 + 미리보기 선 함께 표시
+
+### 미완성 (다음 세션)
+- 선 히트 테스트: `point-to-segment distance < 10px` → 선 선택
+- 선 선택 시 `Stack + Positioned` 플로팅 툴바 (선 위 오버레이)
+- 플로팅 툴바 내용: 색상 7종, 두께 1/2/3/4px, 스타일, 복제, 제거
+- `GestureDetector(behavior: HitTestBehavior.opaque)` 로 차트 터치 이벤트 차단
+
+## 보조지표 (RSI)
+- 차트 하단 80px RSI(14) 패널 — 툴바 `RSI` 버튼 토글
+- Wilder 스무딩 방식, 30/70 수평선 표시
+- `showRsi` 플래그 `_Painter`에 전달
+
+## assets 구조
+```
+mobile/assets/
+├── images/         # 기존 이미지
+├── icons/
+│   └── pencil_draw.png   # 추세선 버튼 커스텀 아이콘 (Image.asset 미적용, 다음 세션)
+└── chart.html
+```
