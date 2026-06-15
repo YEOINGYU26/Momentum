@@ -345,16 +345,24 @@ class _Painter extends CustomPainter {
     }
 
     // ── Time axis ───────────────────────────────────────────────────
-    // 분봉/일봉 자동 감지: 연속 캔들 간격이 2시간 미만이면 분봉
-    final isIntraday = vis.length >= 2 &&
-        (vis.last.time - vis.first.time) < 7200;
+    // 보이는 시간 범위로 4단계 포맷 자동 결정
+    final visSpan = vis.length >= 2 ? vis.last.time - vis.first.time : 0;
+    // < 1일  → HH:MM  |  < 3개월 → M/D  |  < 3년 → YYYY/MM  |  그 외 → YYYY
+    final _showHHMM   = visSpan < 86400;
+    final _showMMDD   = visSpan < 86400 * 90;
+    final _showYYYYMM = visSpan < 86400 * 365 * 3;
+
     String _timeFmt(int unixSec) {
+      // CandleData.fromJson이 KST 시각을 UTC로 저장하므로 isUtc:true 로 역변환
       final dt = DateTime.fromMillisecondsSinceEpoch(unixSec * 1000, isUtc: true);
-      if (isIntraday) {
+      if (_showHHMM) {
         return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
       }
-      return '${dt.month}/${dt.day}';
+      if (_showMMDD) return '${dt.month}/${dt.day}';
+      if (_showYYYYMM) return '${dt.year}/${dt.month.toString().padLeft(2, '0')}';
+      return '${dt.year}';
     }
+
     final step = math.max(1, (vis.length / 5).round());
     for (var i = 0; i < vis.length; i += step) {
       final x = (rightPad + i + 0.5) * candleW;
@@ -390,9 +398,9 @@ class _Painter extends CustomPainter {
         _axisLabel(canvas, chartW + 4, pos.dy, _fmt(price), center: false);
       }
 
-      // Time label at bottom
+      // Time label at bottom (크로스헤어는 항상 정밀 표시)
       final dtc = DateTime.fromMillisecondsSinceEpoch(c.time * 1000, isUtc: true);
-      final crossLabel = isIntraday
+      final crossLabel = _showHHMM
           ? '${dtc.hour.toString().padLeft(2, '0')}:${dtc.minute.toString().padLeft(2, '0')}'
           : '${dtc.year}/${dtc.month.toString().padLeft(2, '0')}/${dtc.day.toString().padLeft(2, '0')}';
       _axisLabel(canvas, sx, usableH + 4, crossLabel, center: true);

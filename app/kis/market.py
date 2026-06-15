@@ -58,13 +58,14 @@ class MarketAPI:
         rows = body.get("output2", [])
         return self._rows_to_dicts(rows)
 
-    async def get_daily_ohlcv_all(self, ticker: str, period: str = "D") -> list[dict]:
-        """페이지네이션으로 전체 기간 조회"""
+    async def get_daily_ohlcv_all(self, ticker: str, period: str = "D", max_pages: int = 0) -> list[dict]:
+        """페이지네이션으로 전체 기간 조회.
+        max_pages=0 이면 period별 기본값(D:100, W:30, M:10) 사용."""
         all_rows: list[dict] = []
         seen: set[str] = set()
         end = date.today()
-        # 일봉: 최대 100콜(100×100=10,000 거래일≈40년), 주봉/월봉: 더 적게
-        max_pages = {"D": 100, "W": 30, "M": 10}.get(period, 50)
+        if max_pages <= 0:
+            max_pages = {"D": 100, "W": 30, "M": 10}.get(period, 50)
 
         for _ in range(max_pages):
             params = {

@@ -133,10 +133,13 @@ class _ChartScreenState extends State<ChartScreen> {
   Future<List<CandleData>> _fetchKisCandles() async {
     final interval = _intervalParams[_selectedInterval] ?? '1d';
     // '전체'/'1년봉' 은 페이지네이션으로 여러 번 호출하므로 타임아웃을 늘림
-    final isLong = interval == 'all' || interval == '1y';
+    // 타임아웃: all/1y=120s, 1d/1w/1mo=30s, 나머지=8s
+    final timeout = const {
+      'all': 120, '1y': 60, '1d': 30, '1w': 30, '1mo': 20,
+    };
     final res = await http
         .get(Uri.parse('$kBaseUrl/api/v1/market/ohlcv/$_currentTicker?interval=$interval'))
-        .timeout(Duration(seconds: isLong ? 120 : 8));
+        .timeout(Duration(seconds: timeout[interval] ?? 8));
     if (res.statusCode != 200) return [];
     final raw = jsonDecode(res.body) as List;
     return raw
