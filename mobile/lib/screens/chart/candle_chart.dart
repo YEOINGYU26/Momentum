@@ -501,16 +501,16 @@ class _CandleChartState extends State<CandleChart> {
     if (i == null || i >= _lines.length) { return; }
     final ln  = _lines[i];
     final vp  = _viewParams();
-    final vc  = vp?.vc ?? [];
-    final avg = vc.length >= 2 ? (vc.last.time - vc.first.time) / (vc.length - 1) : 86400.0;
+    final priceOff = (vp?.pSpan ?? 0) * 0.05;
     setState(() {
       _lines.add(ln.copyWith(
-        startTime:  ln.startTime  - (avg * 8).round(),
-        endTime:    ln.endTime    - (avg * 8).round(),
-        startPrice: ln.startPrice + (vp?.pSpan ?? 0) * 0.04,
-        endPrice:   ln.endPrice   + (vp?.pSpan ?? 0) * 0.04,
+        startPrice: ln.startPrice + priceOff,
+        endPrice:   ln.endPrice   + priceOff,
       ));
-      _selIdx = _lines.length - 1; _selEndpoint = null;
+      _selIdx = _lines.length - 1;
+      _selEndpoint = null;
+      _selLineOrig = _lines.last;
+      _selDragOrigin = null;
     });
   }
 
