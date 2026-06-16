@@ -22,12 +22,12 @@ class _ChartScreenState extends State<ChartScreen> {
   String _currentTicker = '005930';
   List<CandleData> _candles = [];
   bool _loading = false;
-  CandleData? _crosshairCandle;
   List<SymbolInfo> _suggestions = [];
 
   // 통화 토글
   String _currency = 'KRW';
   double _usdRate = 0.0;  // 1 KRW → USD 환율
+  String _currentStockName = '';
 
   static const _intervals = ['1분', '5분', '15분', '1시간', '1일', '1주', '월봉', '1년봉', '전체'];
   static const _intervalParams = {
@@ -48,14 +48,6 @@ class _ChartScreenState extends State<ChartScreen> {
   };
 
   bool get _isCrypto => _cryptoMarkets.containsKey(_currentTicker.toUpperCase());
-
-  static const _quickPicks = [
-    _Ticker('005930', '삼성전자'),
-    _Ticker('000660', 'SK하이닉스'),
-    _Ticker('AAPL', 'Apple'),
-    _Ticker('TSLA', 'Tesla'),
-    _Ticker('BTC', 'Bitcoin'),
-  ];
 
   @override
   void initState() {
@@ -113,13 +105,21 @@ class _ChartScreenState extends State<ChartScreen> {
   void _selectSymbol(SymbolInfo s) {
     context.read<ChartProvider>().setTicker(s.ticker);
     _searchCtrl.clear();
-    setState(() => _suggestions = []);
+    setState(() { _suggestions = []; _currentStockName = s.name; });
     FocusScope.of(context).unfocus();
+  }
+
+  void _updateStockName(String ticker) {
+    final results = SymbolDatabase.search(ticker, '전체').take(1).toList();
+    final name = results.isNotEmpty && results.first.ticker == ticker
+        ? results.first.name : '';
+    if (mounted) setState(() => _currentStockName = name);
   }
 
   Future<void> _fetchCandles() async {
     if (!mounted) return;
     setState(() => _loading = true);
+    _updateStockName(_currentTicker);
     try {
       final candles = _isCrypto
           ? await _fetchUpbitCandles()
@@ -262,11 +262,10 @@ class _ChartScreenState extends State<ChartScreen> {
             if (_suggestions.isNotEmpty)
               _buildSuggestions()
             else ...[
-              _buildQuickPicks(),
+              _buildCurrentSymbol(),
               const SizedBox(height: 8),
             ],
             _buildIntervalBar(),
-            if (_crosshairCandle != null) _buildLegend(_crosshairCandle!),
             Expanded(child: _buildChart()),
           ],
         ),
@@ -421,37 +420,28 @@ class _ChartScreenState extends State<ChartScreen> {
     );
   }
 
-  Widget _buildQuickPicks() {
-    return SizedBox(
-      height: 34,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        itemCount: _quickPicks.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (_, i) {
-          final t = _quickPicks[i];
-          final sel = _currentTicker == t.code;
-          return GestureDetector(
-            onTap: () => context.read<ChartProvider>().setTicker(t.code),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              decoration: BoxDecoration(
-                color: sel ? AppColors.green.withValues(alpha: 0.15) : AppColors.card,
-                borderRadius: BorderRadius.circular(8),
-                border: sel
-                    ? Border.all(color: AppColors.green.withValues(alpha: 0.5))
-                    : null,
-              ),
-              child: Text(t.code,
-                  style: TextStyle(
-                      color: sel ? AppColors.green : AppColors.gray,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600)),
-            ),
-          );
-        },
-      ),
+  Widget _buildCurrentSymbol() {
+    if (_currentStockName.isEmpty) return const SizedBox(height: 6);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+      child: Row(children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white12),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(_currentTicker,
+                style: const TextStyle(
+                    color: AppColors.green, fontSize: 12, fontWeight: FontWeight.bold)),
+            const SizedBox(width: 6),
+            Text(_currentStockName,
+                style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          ]),
+        ),
+      ]),
     );
   }
 
@@ -466,7 +456,7 @@ class _ChartScreenState extends State<ChartScreen> {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.only(left: 20),
               itemCount: _intervals.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 4),
+              separatorBuilder: (context, index) => const SizedBox(width: 4),
               itemBuilder: (_, i) {
                 final iv = _intervals[i];
                 final sel = _selectedInterval == iv;
@@ -499,54 +489,6 @@ class _ChartScreenState extends State<ChartScreen> {
     );
   }
 
-  Widget _buildLegend(CandleData c) {
-    final mult = (_currency == 'USD' && _usdRate > 0) ? _usdRate : 1.0;
-    final isUp = c.close >= c.open;
-    final col = isUp ? AppColors.green : AppColors.red;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 6, 20, 2),
-      child: Row(children: [
-        _lg('O', c.open  * mult),
-        const SizedBox(width: 14),
-        _lg('H', c.high  * mult, AppColors.green),
-        const SizedBox(width: 14),
-        _lg('L', c.low   * mult, AppColors.red),
-        const SizedBox(width: 14),
-        _lg('C', c.close * mult, col),
-      ]),
-    );
-  }
-
-  Widget _lg(String label, double value, [Color? color]) {
-    String fmt(double v) {
-      final pfx = _pricePrefix;
-      final String n;
-      if (v >= 1000) {
-        n = v.toStringAsFixed(0).replaceAllMapped(
-            RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');
-      } else if (v < 1) {
-        n = v.toStringAsFixed(4);
-      } else {
-        n = v.toStringAsFixed(2);
-      }
-      return '$pfx$n';
-    }
-
-    return RichText(
-      text: TextSpan(children: [
-        TextSpan(
-            text: '$label ',
-            style: const TextStyle(color: AppColors.gray, fontSize: 11)),
-        TextSpan(
-            text: fmt(value),
-            style: TextStyle(
-                color: color ?? Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.w600)),
-      ]),
-    );
-  }
-
   Widget _buildChart() {
     if (_candles.isEmpty) {
       return Center(
@@ -574,7 +516,8 @@ class _ChartScreenState extends State<ChartScreen> {
       child: CandleChart(
         candles: _displayCandles,
         pricePrefix: _pricePrefix,
-        onCrosshair: (c) => setState(() => _crosshairCandle = c),
+        ticker: _currentTicker,
+        onCrosshair: (_) {},
       ),
     );
   }
@@ -622,7 +565,3 @@ class _ChartScreenState extends State<ChartScreen> {
   }
 }
 
-class _Ticker {
-  final String code, name;
-  const _Ticker(this.code, this.name);
-}

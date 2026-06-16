@@ -2,6 +2,13 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../core/app_colors.dart';
 
+// ─── Shared color palette ─────────────────────────────────────────────────────
+
+final List<Color> _kColorOptions = [
+  Colors.white, const Color(0xFFFFD700), const Color(0xFF4FC3F7),
+  AppColors.green, AppColors.red, const Color(0xFFCE93D8), const Color(0xFFFF8A65),
+];
+
 // ─── Data ────────────────────────────────────────────────────────────────────
 
 class CandleData {
@@ -43,9 +50,9 @@ class CandleData {
   }
 }
 
-// ─── Drawing types ────────────────────────────────────────────────────────────
+// ─── Drawing types ───────────────────────────────────────────────────────────
 
-enum DrawTool  { none, trendLine, hLine }
+enum DrawTool  { none, trendLine }
 enum DrawPhase { idle, placingFirst, placingSecond, selected }
 enum LineStyle { solid, dashed, dotted }
 
@@ -66,13 +73,74 @@ class ChartLine {
     this.style = LineStyle.solid,
   });
 
-  ChartLine copyWith({Color? color, double? width, LineStyle? style}) => ChartLine(
-    startTime: startTime, endTime: endTime,
-    startPrice: startPrice, endPrice: endPrice,
+  ChartLine copyWith({
+    int? startTime, int? endTime,
+    double? startPrice, double? endPrice,
+    Color? color, double? width, LineStyle? style,
+  }) => ChartLine(
+    startTime:  startTime  ?? this.startTime,
+    endTime:    endTime    ?? this.endTime,
+    startPrice: startPrice ?? this.startPrice,
+    endPrice:   endPrice   ?? this.endPrice,
     color: color ?? this.color, isHorizontal: isHorizontal,
     width: width ?? this.width, style: style ?? this.style,
   );
 }
+
+// ─── Indicator config ─────────────────────────────────────────────────────────
+
+class IndicatorConfig {
+  final List<double> params;  // RSI:[14] MACD:[12,26,9] Stoch:[14,3] MA:[5,20,60] BB:[20,2] Ichi:[9,26,52]
+  final List<Color>  colors;
+  final bool         visible;
+  final Color?       labelColor;  // null = colors[0] 사용
+
+  const IndicatorConfig({required this.params, required this.colors, this.visible = true, this.labelColor});
+
+  IndicatorConfig withLabelColor(Color? c) =>
+      IndicatorConfig(params: params, colors: colors, visible: visible, labelColor: c);
+
+  IndicatorConfig copyWith({List<double>? params, List<Color>? colors, bool? visible}) =>
+      IndicatorConfig(
+        params:     params  ?? this.params,
+        colors:     colors  ?? this.colors,
+        visible:    visible ?? this.visible,
+        labelColor: labelColor,
+      );
+}
+
+const _kDefaultConfigs = <IndicatorType, IndicatorConfig>{
+  IndicatorType.rsi:            IndicatorConfig(params: [14],       colors: [Color(0xFF7E57C2)]),
+  IndicatorType.macd:           IndicatorConfig(params: [12,26,9],  colors: [Color(0xFF26C6DA), Color(0xFFFF9800)]),
+  IndicatorType.stochastic:     IndicatorConfig(params: [14,3],     colors: [Color(0xFF64B5F6), Color(0xFFFF9800)]),
+  IndicatorType.movingAverage:  IndicatorConfig(params: [5,20,60],  colors: [Color(0xFFFFD700), Color(0xFF4FC3F7), Color(0xFFCE93D8)]),
+  IndicatorType.bollingerBands: IndicatorConfig(params: [20,2],     colors: [Color(0xFF4FC3F7), Color(0xFF78909C)]),
+  IndicatorType.ichimoku:       IndicatorConfig(params: [9,26,52],  colors: [Color(0xFFEF5350), Color(0xFF1976D2), Color(0xFF4CAF50), Color(0xFFEF5350)]),
+};
+
+// ─── Indicator types ─────────────────────────────────────────────────────────
+
+enum IndicatorType { rsi, macd, stochastic, movingAverage, bollingerBands, ichimoku }
+
+class _IndMeta {
+  final IndicatorType type;
+  final String name, shortName, description;
+  final bool isPanel;
+  const _IndMeta(this.type, this.name, this.shortName, this.description, this.isPanel);
+}
+
+const List<_IndMeta> _kIndicators = [
+  _IndMeta(IndicatorType.rsi,            'RSI',        'RSI(14)',        '상대강도지수. 0–100 오실레이터.\n70↑ 과매수, 30↓ 과매도 신호.', true),
+  _IndMeta(IndicatorType.macd,           'MACD',       'MACD',          'EMA 차이와 시그널선 교차로\n추세 전환을 포착.', true),
+  _IndMeta(IndicatorType.stochastic,     '스토캐스틱',  'Stoch',         '%K·%D 교차 오실레이터.\n80↑ 과매수, 20↓ 과매도.', true),
+  _IndMeta(IndicatorType.movingAverage,  '이동평균선',  'MA',            '단순이동평균.\n골든/데드크로스 포착.', false),
+  _IndMeta(IndicatorType.bollingerBands, '볼린저 밴드', 'BB',            'SMA ± σ 밴드.\n변동성·추세 이탈 확인.', false),
+  _IndMeta(IndicatorType.ichimoku,       '이치모쿠',   'Ichi',          '일목균형표. 전환선·기준선·구름대로\n지지/저항과 추세 방향 확인.', false),
+];
+
+const _panelIndicatorTypes = {
+  IndicatorType.rsi, IndicatorType.macd, IndicatorType.stochastic,
+};
 
 // ─── Widget ──────────────────────────────────────────────────────────────────
 
@@ -80,10 +148,12 @@ class CandleChart extends StatefulWidget {
   final List<CandleData> candles;
   final void Function(CandleData?)? onCrosshair;
   final String pricePrefix;
+  final String ticker;
 
   const CandleChart({
     super.key, required this.candles,
     this.onCrosshair, this.pricePrefix = '',
+    this.ticker = '',
   });
 
   @override
@@ -93,87 +163,111 @@ class CandleChart extends StatefulWidget {
 // ─── State ───────────────────────────────────────────────────────────────────
 
 class _CandleChartState extends State<CandleChart> {
-  static const double _minVis   = 10;
-  static const double _maxVis   = 200;
-  static const double _axisW    = 58;
-  static const double _timeH    = 26;
-  static const double _volR     = 0.18;
-  static const double _indH     = 80;
-  static const double _toolbarH = 36;
+  static const double _minVis    = 10;
+  static const double _maxVis    = 200;
+  static const double _axisW     = 58;
+  static const double _timeH     = 26;
+  static const double _volR      = 0.18;
+  static const double _panelH    = 80.0;
+  static const double _baseToolH = 36.0;
+  static const int    _futureBuf = 130;   // ~6 months
 
-  // scroll/zoom
   double _vis      = 60;
   double _scroll   = 0;
   double _startVis = 60;
   double _pzoom    = 1.0;
   double _startPz  = 1.0;
 
-  // crosshair
-  Offset? _cross;
-  bool    _longPress     = false;
+  Offset?    _cross;
+  CandleData? _crossCandle;
+  bool    _longPress   = false;  // 실제 onLongPress 시퀀스 중에만 true
+  bool    _crossDrag   = false;  // 십자선 근처 pan → 십자선 이동 모드
   Offset? _lpFinger;
   Offset? _lpCrossStart;
   Offset? _lastTouch;
-  bool    _inPriceAxis   = false;
+  bool    _inPriceAxis = false;
 
-  // RSI
-  bool _showRsi = false;
+  final Set<IndicatorType> _activeIndicators = {};
+  final Map<IndicatorType, IndicatorConfig> _indConfigs =
+      Map.from(_kDefaultConfigs);
 
-  // drawing
   DrawTool  _tool  = DrawTool.none;
   DrawPhase _phase = DrawPhase.idle;
-  Color     _dColor = Colors.white;
-  double    _dWidth = 1.5;
-  LineStyle _dStyle = LineStyle.solid;
+  final Color     _dColor = Colors.white;
+  final double    _dWidth = 1.5;
+  final LineStyle _dStyle = LineStyle.solid;
   Offset?   _cursor;
+  Offset?   _drawFinger;
+  Offset?   _drawCursorBase;
   int?      _fpTime;
   double?   _fpPrice;
   final List<ChartLine> _lines = [];
-  int? _selIdx;
+  int?  _selIdx;
+  int?  _selEndpoint;        // 0 or 1 when dragging an endpoint
+  IndicatorType? _selIndicator; // 보조지표 선택 상태
+
+  Offset _selToolbarOffset = const Offset(8, 6);
 
   Size _sz = Size.zero;
 
   List<CandleData> get _c => widget.candles;
-
   bool get _drawing =>
       _phase == DrawPhase.placingFirst || _phase == DrawPhase.placingSecond;
+  bool get _selVisible => _phase == DrawPhase.selected && _selIdx != null;
 
-  double get _chartH => math.max(_sz.height - _toolbarH, 1);
-  double get _chartW => math.max(_sz.width  - _axisW, 1);
-  double get _cw     => _chartW / _vis;
+  double get _toolbarH => _baseToolH;
+  double get _chartH   => math.max(_sz.height - _toolbarH, 1);
+  double get _chartW   => math.max(_sz.width  - _axisW, 1);
+  double get _cw       => _chartW / _vis;
+
+  double get _totalPanelH =>
+      _activeIndicators.where(_panelIndicatorTypes.contains).length * _panelH;
 
   @override
   void didUpdateWidget(CandleChart old) {
     super.didUpdateWidget(old);
     if (old.candles != widget.candles) {
-      _scroll = 0; _pzoom = 1.0; _vis = 60; _cross = null;
+      _scroll = 0; _pzoom = 1.0; _vis = 60; _cross = null; _crossCandle = null;
+    }
+    if (old.ticker != widget.ticker && widget.ticker.isNotEmpty) {
+      _lines.clear();
+      _selIdx = null; _selEndpoint = null;
+      _phase = DrawPhase.idle; _tool = DrawTool.none;
+      _cross = null; _crossCandle = null;
     }
   }
 
-  ({int s, int e, double rp}) _range() {
-    final mx = math.max(0.0, _c.length.toDouble() - _vis);
-    final off = _scroll.clamp(0.0, mx);
-    final e   = (_c.length - off.toInt()).clamp(0, _c.length);
-    final s   = (e - _vis.ceil()).clamp(0, _c.length);
-    return (s: s, e: e, rp: _vis - (e - s));
+  // ── Range ─────────────────────────────────────────────────────────────────
+  ({int s, int e, double rp, int futureSlots}) _range() {
+    final mx  = math.max(0.0, _c.length.toDouble() - _vis);
+    final off = _scroll.clamp(-_futureBuf.toDouble(), mx);
+    final futureSlots = off < 0 ? (-off).round().clamp(0, _futureBuf) : 0;
+    final normalOff   = math.max(0.0, off);
+    final e        = (_c.length - normalOff.round()).clamp(0, _c.length);
+    final wantData = (_vis.ceil() - futureSlots).clamp(0, _c.length);
+    final s        = (e - wantData).clamp(0, _c.length);
+    final cnt      = e - s;
+    final rp       = (_vis - cnt - futureSlots).clamp(0.0, double.infinity);
+    return (s: s, e: e, rp: rp, futureSlots: futureSlots);
   }
 
   double? _toPrice(double dy) {
     if (_c.isEmpty) return null;
-    final r = _range();
+    final r   = _range();
     final vis = _c.sublist(r.s, r.e);
     if (vis.isEmpty) return null;
-    final usable = _chartH - _timeH - (_showRsi ? _indH : 0.0);
+    final usable = _chartH - _timeH - _totalPanelH;
     final pH = usable * (1 - _volR);
     if (dy < 0 || dy > pH) return null;
     double lo = vis[0].low, hi = vis[0].high;
-    for (final c in vis) { if (c.low < lo) lo = c.low; if (c.high > hi) hi = c.high; }
-    final pad = (hi - lo) * 0.06;
+    for (final c in vis) {
+      if (c.low < lo) { lo = c.low; }
+      if (c.high > hi) { hi = c.high; }
+    }
+    final pad  = (hi - lo) * 0.06;
     final cent = (hi + lo) / 2;
     final half = (hi - lo) / 2 + pad;
-    final pMin = cent - half / _pzoom;
-    final pMax = cent + half / _pzoom;
-    return pMin + (1 - dy / pH) * (pMax - pMin);
+    return (cent - half / _pzoom) + (1 - dy / pH) * (2 * half / _pzoom);
   }
 
   int? _toTime(double dx) {
@@ -194,7 +288,6 @@ class _CandleChartState extends State<CandleChart> {
     return Offset((r.rp + slot + 0.5) * _cw, raw.dy);
   }
 
-  // ── view params helper (shared by hit-test + toolbar positioning) ─────
   ({List<CandleData> vc, double rp, double pMin, double pSpan, double pH})? _viewParams() {
     if (_c.isEmpty) return null;
     final r  = _range();
@@ -202,125 +295,181 @@ class _CandleChartState extends State<CandleChart> {
     if (vc.isEmpty) return null;
     double lo = vc[0].low, hi = vc[0].high;
     for (final c in vc) {
-      if (c.low < lo) lo = c.low;
-      if (c.high > hi) hi = c.high;
+      if (c.low < lo) { lo = c.low; }
+      if (c.high > hi) { hi = c.high; }
     }
     final pad   = (hi - lo) * 0.06;
     final cent  = (hi + lo) / 2;
     final half  = (hi - lo) / 2 + pad;
     final pMin  = cent - half / _pzoom;
-    final pMax  = cent + half / _pzoom;
-    final pSpan = pMax - pMin;
+    final pSpan = 2 * half / _pzoom;
     if (pSpan <= 0) return null;
-    final usable = _chartH - _timeH - (_showRsi ? _indH : 0.0);
+    final usable = _chartH - _timeH - _totalPanelH;
     final pH = usable * (1 - _volR);
     return (vc: vc, rp: r.rp, pMin: pMin, pSpan: pSpan, pH: pH);
   }
 
-  // ── line → pixel coords ───────────────────────────────────────────────
   (Offset, Offset)? _linePixels(ChartLine ln) {
     final vp = _viewParams();
     if (vp == null) return null;
     final vc = vp.vc; final rp = vp.rp;
-    final pMin = vp.pMin; final pSpan = vp.pSpan; final pH = vp.pH;
-    double py(double p) => pH - (p - pMin) / pSpan * pH;
+    double pyF(double p) => vp.pH - (p - vp.pMin) / vp.pSpan * vp.pH;
     double txToX(int t) {
-      for (int i = 0; i < vc.length; i++) {
-        if (vc[i].time >= t) return (rp + i + 0.5) * _cw;
+      if (vc.isEmpty) return 0;
+      final avg = vc.length >= 2
+          ? (vc.last.time - vc.first.time) / (vc.length - 1) : 86400.0;
+      if (t <= vc.first.time) {
+        return (rp + 0.5 - (vc.first.time - t) / avg) * _cw;
       }
-      return _chartW;
+      if (t > vc.last.time) {
+        return (rp + vc.length - 0.5 + (t - vc.last.time) / avg) * _cw;
+      }
+      for (int i = 0; i < vc.length; i++) {
+        if (vc[i].time >= t) { return (rp + i.toDouble() + 0.5) * _cw; }
+      }
+      return (rp + vc.length - 0.5) * _cw;
     }
     if (ln.isHorizontal) {
-      final y = py(ln.startPrice);
+      final y = pyF(ln.startPrice);
       return (Offset(0, y), Offset(_chartW, y));
     }
-    final x1 = txToX(ln.startTime);
-    final x2 = txToX(ln.endTime);
-    return (Offset(x1, py(ln.startPrice)), Offset(x2, py(ln.endPrice)));
+    return (Offset(txToX(ln.startTime), pyF(ln.startPrice)),
+            Offset(txToX(ln.endTime),   pyF(ln.endPrice)));
   }
 
-  // ── hit test ──────────────────────────────────────────────────────────
   static double _ptSegDist(Offset p, Offset a, Offset b) {
     final ab   = b - a;
-    final ap   = p - a;
     final len2 = ab.distanceSquared;
-    if (len2 == 0) return (p - a).distance;
-    final t = (ap.dx * ab.dx + ap.dy * ab.dy) / len2;
-    final closest = a + ab * t.clamp(0.0, 1.0);
-    return (p - closest).distance;
+    if (len2 == 0) { return (p - a).distance; }
+    final t = (((p - a).dx * ab.dx + (p - a).dy * ab.dy) / len2).clamp(0.0, 1.0);
+    return (p - (a + ab * t)).distance;
   }
 
   int? _findLineAt(Offset tap) {
     int? hit; double minD = 12.0;
     for (int i = 0; i < _lines.length; i++) {
       final pts = _linePixels(_lines[i]);
-      if (pts == null) continue;
+      if (pts == null) { continue; }
       final d = _ptSegDist(tap, pts.$1, pts.$2);
       if (d < minD) { minD = d; hit = i; }
     }
     return hit;
   }
 
-  // ── tap handler on chart area ─────────────────────────────────────────
+  // Returns 0 (start endpoint) or 1 (end endpoint) if tap is near either
+  int? _findEndpointAt(Offset tap) {
+    final i = _selIdx;
+    if (i == null || i >= _lines.length) { return null; }
+    final pts = _linePixels(_lines[i]);
+    if (pts == null) { return null; }
+    // 24px 히트 반경 — 동그라미(5px) 보다 훨씬 넓어야 손가락으로 정확히 짚을 수 있음
+    if ((tap - pts.$1).distance < 24) { return 0; }
+    if ((tap - pts.$2).distance < 24) { return 1; }
+    return null;
+  }
+
   void _handleTapOnChart(Offset tap) {
+    // 보조지표 선택 해제
+    if (_selIndicator != null) {
+      setState(() => _selIndicator = null);
+      return;
+    }
+    // 추세선 히트 검사 (십자선 여부와 무관하게 먼저)
     final hit = _findLineAt(tap);
     if (hit != null) {
       setState(() {
-        _selIdx = hit; _phase = DrawPhase.selected;
-        _tool = DrawTool.none; _cross = null;
+        _selIdx = hit; _phase = DrawPhase.selected; _tool = DrawTool.none;
+        _cross = null; _crossCandle = null; _selToolbarOffset = const Offset(8, 6); _selEndpoint = null;
       });
       return;
     }
+    // 추세선 선택 해제
     if (_phase == DrawPhase.selected) {
-      setState(() { _phase = DrawPhase.idle; _selIdx = null; _tool = DrawTool.none; });
+      setState(() { _phase = DrawPhase.idle; _selIdx = null; _tool = DrawTool.none; _selEndpoint = null; });
       return;
     }
-    if (_cross != null) _showCross(tap);
+    // 십자선 해제
+    if (_cross != null) {
+      setState(() { _cross = null; _crossCandle = null; });
+      widget.onCrosshair?.call(null);
+    }
   }
 
-  // ── drawing actions ───────────────────────────────────────────────────
+  void _moveSelLine(Offset delta) {
+    final i = _selIdx;
+    if (i == null || i >= _lines.length) { return; }
+    final vp = _viewParams();
+    if (vp == null) { return; }
+    final vc = vp.vc;
+    if (vc.length < 2) { return; }
+    final avg = (vc.last.time - vc.first.time) / (vc.length - 1);
+    final ln  = _lines[i];
+    setState(() {
+      _lines[i] = ln.copyWith(
+        startTime:  ln.startTime  + (delta.dx / _cw * avg).round(),
+        endTime:    ln.endTime    + (delta.dx / _cw * avg).round(),
+        startPrice: ln.startPrice - delta.dy / vp.pH * vp.pSpan,
+        endPrice:   ln.endPrice   - delta.dy / vp.pH * vp.pSpan,
+      );
+    });
+  }
+
+  void _moveSelEndpoint(int ep, Offset delta) {
+    final i = _selIdx;
+    if (i == null || i >= _lines.length) { return; }
+    final vp = _viewParams();
+    if (vp == null) { return; }
+    final vc = vp.vc;
+    if (vc.length < 2) { return; }
+    final avg = (vc.last.time - vc.first.time) / (vc.length - 1);
+    final ln  = _lines[i];
+    setState(() {
+      if (ep == 0) {
+        _lines[i] = ln.copyWith(
+          startTime:  ln.startTime  + (delta.dx / _cw * avg).round(),
+          startPrice: ln.startPrice - delta.dy / vp.pH * vp.pSpan,
+        );
+      } else {
+        _lines[i] = ln.copyWith(
+          endTime:  ln.endTime  + (delta.dx / _cw * avg).round(),
+          endPrice: ln.endPrice - delta.dy / vp.pH * vp.pSpan,
+        );
+      }
+    });
+  }
+
   void _activateTool(DrawTool tool) {
     setState(() {
       if (_tool == tool && _drawing) {
         _tool = DrawTool.none; _phase = DrawPhase.idle;
         _cursor = null; _fpTime = null; _fpPrice = null;
+        _drawFinger = null; _drawCursorBase = null;
       } else {
         _tool = tool; _phase = DrawPhase.placingFirst;
-        _cursor = Offset(_chartW / 2, _chartH / 2);
+        _cursor = Offset(_chartW / 2, _chartH * 0.35);
+        _drawFinger = null; _drawCursorBase = null;
         _fpTime = null; _fpPrice = null;
       }
-      _selIdx = null; _cross = null;
+      _selIdx = null; _selEndpoint = null; _cross = null; _crossCandle = null;
     });
   }
 
   void _handleDrawTap() {
     final pos = _cursor ?? _lastTouch;
-    if (pos == null) return;
-
+    if (pos == null) { return; }
     if (_phase == DrawPhase.placingFirst) {
-      if (_tool == DrawTool.hLine) {
-        final p = _toPrice(pos.dy);
-        if (p != null && _c.isNotEmpty) {
-          setState(() {
-            _lines.add(ChartLine(
-              startTime: _c.first.time, endTime: _c.last.time,
-              startPrice: p, endPrice: p,
-              color: _dColor, width: _dWidth, style: _dStyle, isHorizontal: true,
-            ));
-            _selIdx = null;
-            _phase = DrawPhase.idle; _cursor = null;
-          });
-        }
-      } else {
-        final t = _toTime(pos.dx);
-        final p = _toPrice(pos.dy);
-        if (t != null && p != null) {
-          setState(() { _fpTime = t; _fpPrice = p; _phase = DrawPhase.placingSecond; });
-        }
+      final t = _toTime(pos.dx); final p = _toPrice(pos.dy);
+      if (t != null && p != null) {
+        // 두 번째 커서는 첫 번째 점에서 8칸 오른쪽으로 시작
+        final secondX = (pos.dx + _cw * 8).clamp(0.0, _chartW - 1);
+        final secondPos = Offset(secondX, pos.dy);
+        setState(() {
+          _fpTime = t; _fpPrice = p; _phase = DrawPhase.placingSecond;
+          _cursor = secondPos; _drawFinger = null; _drawCursorBase = secondPos;
+        });
       }
     } else if (_phase == DrawPhase.placingSecond) {
-      final t = _toTime(pos.dx);
-      final p = _toPrice(pos.dy);
+      final t = _toTime(pos.dx); final p = _toPrice(pos.dy);
       if (t != null && p != null) {
         setState(() {
           _lines.add(ChartLine(
@@ -328,9 +477,9 @@ class _CandleChartState extends State<CandleChart> {
             startPrice: _fpPrice!, endPrice: p,
             color: _dColor, width: _dWidth, style: _dStyle,
           ));
-          _selIdx = null;
           _phase = DrawPhase.idle; _tool = DrawTool.none;
           _fpTime = null; _fpPrice = null; _cursor = null;
+          _drawFinger = null; _drawCursorBase = null; _selIdx = null;
         });
       }
     }
@@ -338,59 +487,156 @@ class _CandleChartState extends State<CandleChart> {
 
   void _updateSel({Color? color, double? width, LineStyle? style}) {
     final i = _selIdx;
-    if (i == null || i >= _lines.length) return;
+    if (i == null || i >= _lines.length) { return; }
     setState(() => _lines[i] = _lines[i].copyWith(color: color, width: width, style: style));
   }
 
   void _cloneSel() {
     final i = _selIdx;
-    if (i == null || i >= _lines.length) return;
-    setState(() { _lines.add(_lines[i]); _selIdx = _lines.length - 1; });
+    if (i == null || i >= _lines.length) { return; }
+    final ln  = _lines[i];
+    final vp  = _viewParams();
+    final vc  = vp?.vc ?? [];
+    final avg = vc.length >= 2 ? (vc.last.time - vc.first.time) / (vc.length - 1) : 86400.0;
+    setState(() {
+      _lines.add(ln.copyWith(
+        startTime:  ln.startTime  - (avg * 8).round(),
+        endTime:    ln.endTime    - (avg * 8).round(),
+        startPrice: ln.startPrice + (vp?.pSpan ?? 0) * 0.04,
+        endPrice:   ln.endPrice   + (vp?.pSpan ?? 0) * 0.04,
+      ));
+      _selIdx = _lines.length - 1; _selEndpoint = null;
+    });
   }
 
   void _deleteSel() {
     final i = _selIdx;
-    if (i == null || i >= _lines.length) return;
+    if (i == null || i >= _lines.length) { return; }
     setState(() {
-      _lines.removeAt(i); _selIdx = null;
+      _lines.removeAt(i); _selIdx = null; _selEndpoint = null;
       _phase = DrawPhase.idle; _tool = DrawTool.none;
     });
   }
 
-  // ── crosshair ─────────────────────────────────────────────────────────
   void _showCross(Offset pos) {
-    if (_c.isEmpty) return;
+    if (_c.isEmpty) { return; }
     final r   = _range();
     final vis = _c.sublist(r.s, r.e);
-    if (vis.isEmpty) return;
+    if (vis.isEmpty) { return; }
     final slot = ((pos.dx / _cw) - r.rp).round().clamp(0, vis.length - 1);
-    final sx   = (r.rp + slot + 0.5) * _cw;
-    setState(() => _cross = Offset(sx, pos.dy));
+    setState(() {
+      _cross = Offset((r.rp + slot + 0.5) * _cw, pos.dy);
+      _crossCandle = vis[slot];
+    });
     widget.onCrosshair?.call(vis[slot]);
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────
+  Color _indColor(IndicatorType type) {
+    final cfg = _indConfigs[type];
+    if (cfg == null) return Colors.white;
+    return cfg.labelColor ?? (cfg.colors.isNotEmpty ? cfg.colors[0] : Colors.white);
+  }
+
+  // ── OHLCV 범례 ─────────────────────────────────────────────────────────────
+
+  static String _fmtVol(double v) {
+    if (v >= 1e8) return '${(v / 1e8).toStringAsFixed(1)}억';
+    if (v >= 1e4) return '${(v / 1e4).toStringAsFixed(0)}만';
+    return v.toStringAsFixed(0);
+  }
+
+  static String _fmtPrice(String prefix, double v) {
+    final String n;
+    if (v >= 1e6) {
+      n = '${(v / 1e6).toStringAsFixed(2)}M';
+    } else if (v >= 1000) {
+      n = v.toStringAsFixed(0).replaceAllMapped(
+          RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
+    } else if (v < 1) {
+      n = v.toStringAsFixed(4);
+    } else {
+      n = v.toStringAsFixed(2);
+    }
+    return '$prefix$n';
+  }
+
+  Widget _buildLegend(CandleData c) {
+    final isUp = c.close >= c.open;
+    final col  = isUp ? AppColors.green : AppColors.red;
+    final pfx  = widget.pricePrefix;
+    Widget lbl(String k, String v, [Color? vc]) => RichText(text: TextSpan(children: [
+      TextSpan(text: '$k ', style: const TextStyle(color: AppColors.gray, fontSize: 11)),
+      TextSpan(text: v,  style: TextStyle(
+          color: vc ?? Colors.white70, fontSize: 11, fontWeight: FontWeight.w600)),
+    ]));
+    return Container(
+      height: 22,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      color: Colors.black.withValues(alpha: 0.25),
+      child: Row(children: [
+        lbl('시', _fmtPrice(pfx, c.open)),
+        const SizedBox(width: 10),
+        lbl('고', _fmtPrice(pfx, c.high),  AppColors.green),
+        const SizedBox(width: 10),
+        lbl('저', _fmtPrice(pfx, c.low),   AppColors.red),
+        const SizedBox(width: 10),
+        lbl('종', _fmtPrice(pfx, c.close), col),
+        const SizedBox(width: 10),
+        lbl('거', _fmtVol(c.volume)),
+      ]),
+    );
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (_, c) {
       _sz = c.biggest;
+      final clampX = math.max(0.0, _chartW - 268);
+      final clampY = math.max(0.0, _chartH - 52);
       return Column(children: [
         _buildToolbar(),
+        if (_crossCandle != null) _buildLegend(_crossCandle!),
         Expanded(
           child: Stack(children: [
             GestureDetector(
               onScaleStart: (d) {
                 _lastTouch = d.localFocalPoint;
                 if (_drawing) {
-                  setState(() => _cursor = _snapCursor(d.localFocalPoint));
+                  _drawFinger = d.localFocalPoint; _drawCursorBase = _cursor;
                   return;
                 }
                 _inPriceAxis = d.localFocalPoint.dx > _chartW;
+                if (_selVisible && d.pointerCount == 1) {
+                  setState(() => _selEndpoint = _findEndpointAt(d.localFocalPoint));
+                  return;
+                }
+                if (!_inPriceAxis && _cross != null &&
+                    d.pointerCount == 1 && _phase == DrawPhase.idle) {
+                  final t = d.localFocalPoint;
+                  if ((t.dx - _cross!.dx).abs() < 28 || (t.dy - _cross!.dy).abs() < 28) {
+                    _crossDrag = true; _lpFinger = t; _lpCrossStart = _cross;
+                    return;
+                  }
+                }
                 _startVis = _vis; _startPz = _pzoom;
               },
               onScaleUpdate: (d) {
-                if (_drawing) {
-                  if (d.pointerCount == 1) setState(() => _cursor = _snapCursor(d.localFocalPoint));
+                if (_drawing && d.pointerCount == 1) {
+                  final df = _drawFinger; final dc = _drawCursorBase;
+                  if (df != null && dc != null) {
+                    setState(() => _cursor = _snapCursor(dc + (d.localFocalPoint - df)));
+                  }
+                  return;
+                }
+                if (_selVisible && _selIdx != null && d.pointerCount == 1) {
+                  final ep = _selEndpoint;
+                  if (ep != null) {
+                    _moveSelEndpoint(ep, d.focalPointDelta);
+                  } else {
+                    _moveSelLine(d.focalPointDelta);
+                  }
                   return;
                 }
                 if (_inPriceAxis) {
@@ -406,229 +652,574 @@ class _CandleChartState extends State<CandleChart> {
                   setState(() => _vis = (_startVis / d.scale).clamp(_minVis, _maxVis));
                   return;
                 }
-                if (_longPress) return;
+                if (_crossDrag || _longPress) {
+                  final sf = _lpFinger; final sc = _lpCrossStart;
+                  if (sf != null && sc != null) { _showCross(sc + (d.localFocalPoint - sf)); }
+                  return;
+                }
                 final had = _cross != null;
                 setState(() {
-                  if (had) _cross = null;
+                  if (had) { _cross = null; _crossCandle = null; }
                   final mx = math.max(0.0, _c.length.toDouble() - _vis);
-                  _scroll = (_scroll + d.focalPointDelta.dx / _cw).clamp(0.0, mx);
+                  _scroll = (_scroll + d.focalPointDelta.dx / _cw)
+                      .clamp(-_futureBuf.toDouble(), mx);
                 });
-                if (had) widget.onCrosshair?.call(null);
+                if (had) { widget.onCrosshair?.call(null); }
               },
-              onScaleEnd: (_) {},
+              onScaleEnd: (_) { _selEndpoint = null; _crossDrag = false; },
               onTapDown: (d) { _lastTouch = d.localPosition; },
               onTap: () {
                 if (_drawing) { _handleDrawTap(); return; }
                 final touch = _lastTouch;
-                if (touch == null || _longPress) return;
-                if (touch.dx < _chartW) _handleTapOnChart(touch);
+                if (touch == null || _longPress) { return; }
+                if (touch.dx < _chartW) { _handleTapOnChart(touch); }
               },
               onLongPressStart: (d) {
-                if (_drawing) return;
+                if (_drawing) { return; }
                 _longPress = true; _lpFinger = d.localPosition;
-                if (_cross == null) _showCross(d.localPosition);
+                if (_cross == null) { _showCross(d.localPosition); }
                 _lpCrossStart = _cross;
               },
               onLongPressMoveUpdate: (d) {
-                if (_drawing) return;
+                if (_drawing) { return; }
                 final sf = _lpFinger; final sc = _lpCrossStart;
                 if (sf == null || sc == null) { _showCross(d.localPosition); return; }
                 _showCross(sc + (d.localPosition - sf));
               },
-              onLongPressEnd: (_) {
-                _longPress = false; _lpFinger = null; _lpCrossStart = null;
-              },
-              child: SizedBox.expand(
-                child: CustomPaint(
-                  painter: _Painter(
-                    candles: _c, vis: _vis, scroll: _scroll, pzoom: _pzoom,
-                    cross: _cross, prefix: widget.pricePrefix,
-                    showRsi: _showRsi, lines: _lines, selIdx: _selIdx,
-                    phase: _phase, cursor: _cursor,
-                    fpTime: _fpTime, fpPrice: _fpPrice,
-                  ),
+              onLongPressEnd: (_) { _longPress = false; _lpFinger = null; _lpCrossStart = null; },
+              child: CustomPaint(
+                painter: _Painter(
+                  candles: _c, vis: _vis, scroll: _scroll, pzoom: _pzoom,
+                  cross: _cross, prefix: widget.pricePrefix,
+                  activeIndicators: Set.unmodifiable(_activeIndicators),
+                  indConfigs: Map.unmodifiable(_indConfigs),
+                  lines: _lines, selIdx: _selIdx,
+                  phase: _phase, cursor: _cursor,
+                  fpTime: _fpTime, fpPrice: _fpPrice,
                 ),
+                child: const SizedBox.expand(),
               ),
             ),
-            if (_phase == DrawPhase.selected && _selIdx != null)
-              _buildFloatingToolbar(),
+            // Indicator labels (tappable)
+            if (_activeIndicators.isNotEmpty)
+              Positioned(
+                left: 7, top: 4,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final meta in _kIndicators
+                        .where((m) => _activeIndicators.contains(m.type)))
+                      _buildIndLabel(meta),
+                  ],
+                ),
+              ),
+            // Floating selection toolbar
+            if (_selVisible)
+              Positioned(
+                left:  _selToolbarOffset.dx.clamp(0.0, clampX),
+                top:   _selToolbarOffset.dy.clamp(0.0, clampY),
+                child: _buildFloatingSelToolbar(),
+              ),
           ]),
         ),
       ]);
     });
   }
 
-  // ── Toolbar ───────────────────────────────────────────────────────────
-  static const _colors = [
-    Colors.white, Color(0xFFFFD700), Color(0xFF4FC3F7),
-    AppColors.green, AppColors.red, Color(0xFFCE93D8), Color(0xFFFF8A65),
-  ];
+  // ── Indicator label chip ──────────────────────────────────────────────────
 
-  Widget _buildToolbar() => SizedBox(
-    height: _toolbarH,
-    child: Row(children: [
-      const SizedBox(width: 8),
-      _toolBtn(DrawTool.trendLine, '추세선', pencil: true),
-      const SizedBox(width: 4),
-      _toolBtn(DrawTool.hLine, '수평선', emoji: '➖'),
-      const SizedBox(width: 8),
-      GestureDetector(
-        onTap: _showColorSheet,
-        child: Container(
-          width: 18, height: 18,
-          decoration: BoxDecoration(
-            color: _dColor, shape: BoxShape.circle,
-            border: Border.all(color: Colors.white30, width: 1.5),
-          ),
-        ),
-      ),
-      const SizedBox(width: 6),
-      GestureDetector(
-        onTap: () => setState(() => _lines.clear()),
-        child: const Icon(Icons.delete_outline, size: 16, color: AppColors.gray),
-      ),
-      const Spacer(),
-      GestureDetector(
-        onTap: () => setState(() => _showRsi = !_showRsi),
-        child: Container(
-          margin: const EdgeInsets.only(right: 8),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-          decoration: BoxDecoration(
-            color: _showRsi ? const Color(0xFF7E57C2).withValues(alpha: 0.25) : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: _showRsi
-                  ? const Color(0xFF7E57C2).withValues(alpha: 0.6)
-                  : Colors.white12,
-            ),
-          ),
-          child: Text('RSI', style: TextStyle(
-            color: _showRsi ? const Color(0xFF9575CD) : AppColors.gray,
-            fontSize: 10, fontWeight: FontWeight.w600,
-          )),
-        ),
-      ),
-    ]),
-  );
+  Widget _buildIndLabel(_IndMeta meta) {
+    final config     = _indConfigs[meta.type]!;
+    final base       = _indColor(meta.type);
+    final color      = config.visible ? base : base.withValues(alpha: 0.3);
+    final shortLabel = _buildShortLabel(meta.type, config.params);
+    final isSel      = _selIndicator == meta.type;
 
-  Widget _toolBtn(DrawTool tool, String label, {bool pencil = false, String? emoji}) {
-    final active = _tool == tool;
-    Widget icon;
-    if (pencil) {
-      icon = Image.asset('assets/icons/pencil_draw.png', width: 13, height: 13,
-          color: active ? AppColors.green : AppColors.gray);
-    } else {
-      icon = Text(emoji ?? '', style: const TextStyle(fontSize: 13));
-    }
     return GestureDetector(
-      onTap: () => _activateTool(tool),
+      onTap: () => setState(() => _selIndicator = isSel ? null : meta.type),
+      behavior: HitTestBehavior.opaque,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        margin: const EdgeInsets.only(bottom: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
         decoration: BoxDecoration(
-          color: active ? AppColors.green.withValues(alpha: 0.2) : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-          border: active ? Border.all(color: AppColors.green.withValues(alpha: 0.5)) : null,
+          color: isSel
+              ? Colors.white.withValues(alpha: 0.13)
+              : Colors.black.withValues(alpha: 0.40),
+          borderRadius: BorderRadius.circular(5),
+          border: isSel
+              ? Border.all(color: Colors.white.withValues(alpha: 0.25), width: 0.9)
+              : null,
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          icon,
-          const SizedBox(width: 3),
-          Text(label, style: TextStyle(
-            fontSize: 10, fontWeight: FontWeight.w600,
-            color: active ? AppColors.green : AppColors.gray,
+          Text(shortLabel, style: TextStyle(
+            color: color, fontSize: 11, fontWeight: FontWeight.w500,
+            decoration: config.visible ? null : TextDecoration.lineThrough,
+            decorationColor: color,
           )),
+          if (isSel) ...[
+            const SizedBox(width: 6),
+            // 설정
+            _indIconBtn(Icons.settings_outlined, () => _showIndicatorSettings(meta)),
+            // 숨기기 / 보이기
+            _indIconBtn(
+              config.visible ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+              () => setState(() {
+                _indConfigs[meta.type] = config.copyWith(visible: !config.visible);
+              }),
+              color: config.visible ? Colors.white70 : Colors.white38,
+            ),
+            // 제거
+            _indIconBtn(Icons.close, () {
+              setState(() {
+                _activeIndicators.remove(meta.type);
+                _selIndicator = null;
+              });
+            }, color: AppColors.red.withValues(alpha: 0.8)),
+          ],
         ]),
       ),
     );
   }
 
-  // ── Floating toolbar (선 선택 시 선 위에 오버레이) ─────────────────────
-  Widget _buildFloatingToolbar() {
-    final i = _selIdx;
-    if (i == null || i >= _lines.length) return const SizedBox.shrink();
-    final ln = _lines[i];
-
-    final pts = _linePixels(ln);
-    final midX = pts != null ? (pts.$1.dx + pts.$2.dx) / 2 : _chartW / 2;
-    final midY = pts != null ? (pts.$1.dy + pts.$2.dy) / 2 : _chartH / 2;
-
-    const toolW = 210.0;
-    const toolH = 40.0;
-    const margin = 8.0;
-
-    final left = (midX - toolW / 2).clamp(margin, math.max(margin, _chartW - toolW - margin)).toDouble();
-    final topAbove = midY - toolH - 12;
-    final top = topAbove >= margin ? topAbove : midY + 12;
-
-    return Positioned(
-      left: left, top: top,
-      child: Material(
-        color: Colors.transparent,
-        child: Container(
-          height: toolH,
-          decoration: BoxDecoration(
-            color: const Color(0xFF1A1F2E),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.white12),
-            boxShadow: const [BoxShadow(color: Color(0x88000000), blurRadius: 10, offset: Offset(0, 3))],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
-              // 색상 — 드롭다운 팝업
-              Builder(builder: (ctx) => GestureDetector(
-                onTap: () => _showSelColorMenu(ctx, ln),
-                child: Container(
-                  width: 22, height: 22,
-                  decoration: BoxDecoration(
-                    color: ln.color, shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white30, width: 1.5),
-                  ),
-                ),
-              )),
-              const SizedBox(width: 2),
-              const Icon(Icons.arrow_drop_down, size: 14, color: AppColors.gray),
-              _div(),
-              // 두께 — 드롭다운 팝업
-              Builder(builder: (ctx) => GestureDetector(
-                onTap: () => _showSelWidthMenu(ctx, ln),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.white24),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Text('${ln.width.toInt()}px', style: const TextStyle(
-                      fontSize: 10, color: Colors.white70, fontWeight: FontWeight.w600,
-                    )),
-                    const SizedBox(width: 2),
-                    const Icon(Icons.arrow_drop_down, size: 14, color: AppColors.gray),
-                  ]),
-                ),
-              )),
-              _div(),
-              // 스타일
-              _styleBtn(ln, LineStyle.solid,  '─'),
-              _styleBtn(ln, LineStyle.dashed, '--'),
-              _styleBtn(ln, LineStyle.dotted, '···'),
-              _div(),
-              // 복제
-              GestureDetector(
-                onTap: _cloneSel,
-                child: const Icon(Icons.copy_outlined, size: 16, color: AppColors.gray),
-              ),
-              const SizedBox(width: 10),
-              // 제거
-              GestureDetector(
-                onTap: _deleteSel,
-                child: const Icon(Icons.delete_outline, size: 16, color: AppColors.red),
-              ),
-            ]),
-          ),
-        ),
+  Widget _indIconBtn(IconData icon, VoidCallback onTap, {Color? color}) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        child: Icon(icon, size: 14, color: color ?? Colors.white70),
       ),
     );
   }
+
+  static String _buildShortLabel(IndicatorType type, List<double> params) {
+    switch (type) {
+      case IndicatorType.rsi:
+        return 'RSI(${params[0].toInt()})';
+      case IndicatorType.macd:
+        return 'MACD(${params[0].toInt()},${params[1].toInt()},${params[2].toInt()})';
+      case IndicatorType.stochastic:
+        return 'Stoch(${params[0].toInt()},${params[1].toInt()})';
+      case IndicatorType.movingAverage:
+        return 'MA(${params[0].toInt()}/${params[1].toInt()}/${params[2].toInt()})';
+      case IndicatorType.bollingerBands:
+        return 'BB(${params[0].toInt()},${params[1].toStringAsFixed(1)})';
+      case IndicatorType.ichimoku:
+        return 'Ichi(${params[0].toInt()},${params[1].toInt()},${params[2].toInt()})';
+    }
+  }
+
+  // ── Indicator settings sheet ──────────────────────────────────────────────
+
+  void _showIndicatorSettings(_IndMeta meta) {
+    final config = _indConfigs[meta.type]!;
+    final pLabels = _paramLabels(meta.type);
+    final cLabels = _colorLabels(meta.type);
+    final controllers = config.params
+        .map((p) => TextEditingController(text: _fmtParam(p)))
+        .toList();
+    var tempColors = [...config.colors];
+    Color tempLabelColor = config.labelColor ??
+        (config.colors.isNotEmpty ? config.colors.first : const Color(0xFF7E57C2));
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1F2E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setModal) {
+        return SingleChildScrollView(
+          child: Padding(
+            padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 16),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                margin: const EdgeInsets.symmetric(vertical: 10),
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                    color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                child: Row(children: [
+                  Text('${meta.name} 설정', style: const TextStyle(
+                      color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () {
+                      final np = controllers
+                          .map((c) => double.tryParse(c.text) ?? 14.0)
+                          .toList();
+                      setState(() => _indConfigs[meta.type] =
+                          config.copyWith(params: np, colors: [...tempColors])
+                              .withLabelColor(tempLabelColor));
+                      Navigator.pop(ctx);
+                    },
+                    child: const Text('적용', style: TextStyle(
+                        color: AppColors.green, fontWeight: FontWeight.bold)),
+                  ),
+                ]),
+              ),
+              // Period / param inputs
+              for (int i = 0; i < math.min(pLabels.length, controllers.length); i++)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                  child: Row(children: [
+                    SizedBox(width: 100, child: Text(pLabels[i],
+                        style: const TextStyle(color: AppColors.gray, fontSize: 13))),
+                    const SizedBox(width: 12),
+                    SizedBox(width: 80, child: TextField(
+                      controller: controllers[i],
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      decoration: InputDecoration(
+                        filled: true, fillColor: AppColors.card,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide.none),
+                        isDense: true, contentPadding: const EdgeInsets.all(10),
+                      ),
+                    )),
+                  ]),
+                ),
+              // Color pickers
+              for (int i = 0; i < math.min(cLabels.length, tempColors.length); i++)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                  child: Row(children: [
+                    SizedBox(width: 100, child: Text(cLabels[i],
+                        style: const TextStyle(color: AppColors.gray, fontSize: 13))),
+                    const SizedBox(width: 12),
+                    Wrap(spacing: 8, children: _kColorOptions.map((col) =>
+                        GestureDetector(
+                          onTap: () => setModal(() => tempColors[i] = col),
+                          child: Container(
+                            width: 24, height: 24,
+                            decoration: BoxDecoration(
+                              color: col, shape: BoxShape.circle,
+                              border: tempColors[i].toARGB32() == col.toARGB32()
+                                  ? Border.all(color: Colors.white, width: 2) : null,
+                            ),
+                          ),
+                        )).toList()),
+                  ]),
+                ),
+              // Label color picker
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Row(children: [
+                  const SizedBox(width: 100, child: Text('레이블 색상',
+                      style: TextStyle(color: AppColors.gray, fontSize: 13))),
+                  const SizedBox(width: 12),
+                  Wrap(spacing: 8, children: _kColorOptions.map((col) =>
+                      GestureDetector(
+                        onTap: () => setModal(() => tempLabelColor = col),
+                        child: Container(
+                          width: 24, height: 24,
+                          decoration: BoxDecoration(
+                            color: col, shape: BoxShape.circle,
+                            border: tempLabelColor.toARGB32() == col.toARGB32()
+                                ? Border.all(color: Colors.white, width: 2) : null,
+                          ),
+                        ),
+                      )).toList()),
+                ]),
+              ),
+              const SizedBox(height: 8),
+            ]),
+          ),
+        );
+      }),
+    );
+  }
+
+  static List<String> _paramLabels(IndicatorType type) {
+    switch (type) {
+      case IndicatorType.rsi:            return ['기간'];
+      case IndicatorType.macd:           return ['빠른선(EMA)', '느린선(EMA)', '시그널'];
+      case IndicatorType.stochastic:     return ['기간(%K)', '스무딩(%D)'];
+      case IndicatorType.movingAverage:  return ['단기', '중기', '장기'];
+      case IndicatorType.bollingerBands: return ['기간', '배수(σ)'];
+      case IndicatorType.ichimoku:       return ['전환선', '기준선', '선행스팬B'];
+    }
+  }
+
+  static List<String> _colorLabels(IndicatorType type) {
+    switch (type) {
+      case IndicatorType.rsi:            return ['선 색상'];
+      case IndicatorType.macd:           return ['MACD', '시그널'];
+      case IndicatorType.stochastic:     return ['%K', '%D'];
+      case IndicatorType.movingAverage:  return ['단기', '중기', '장기'];
+      case IndicatorType.bollingerBands: return ['밴드', '중선'];
+      case IndicatorType.ichimoku:       return ['전환선', '기준선', '선행A', '선행B'];
+    }
+  }
+
+  static String _fmtParam(double p) =>
+      (p == p.roundToDouble()) ? p.toInt().toString() : p.toStringAsFixed(1);
+
+  // ── Main toolbar ──────────────────────────────────────────────────────────
+
+  Widget _buildToolbar() {
+    return SizedBox(
+      height: _baseToolH,
+      child: Row(children: [
+        const SizedBox(width: 8),
+        GestureDetector(
+          onTap: () => _activateTool(DrawTool.trendLine),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: _tool == DrawTool.trendLine
+                  ? AppColors.green.withValues(alpha: 0.2) : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: _tool == DrawTool.trendLine
+                    ? AppColors.green.withValues(alpha: 0.6) : Colors.white24,
+              ),
+            ),
+            child: Image.asset('assets/icons/pencil_draw.png',
+                width: 18, height: 18,
+                color: _tool == DrawTool.trendLine ? AppColors.green : AppColors.gray),
+          ),
+        ),
+        const SizedBox(width: 8),
+        GestureDetector(
+          onTap: _showIndicatorPicker,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: _activeIndicators.isNotEmpty
+                  ? AppColors.green.withValues(alpha: 0.12) : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: _activeIndicators.isNotEmpty
+                    ? AppColors.green.withValues(alpha: 0.5) : Colors.white24,
+              ),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text('보조지표', style: TextStyle(
+                color: _activeIndicators.isNotEmpty ? AppColors.green : AppColors.gray,
+                fontSize: 10, fontWeight: FontWeight.w600,
+              )),
+              if (_activeIndicators.isNotEmpty) ...[
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                      color: AppColors.green, borderRadius: BorderRadius.circular(8)),
+                  child: Text('${_activeIndicators.length}', style: const TextStyle(
+                    color: Colors.black, fontSize: 9, fontWeight: FontWeight.bold,
+                  )),
+                ),
+              ],
+            ]),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  // ── Floating selection toolbar ─────────────────────────────────────────────
+
+  Widget _buildFloatingSelToolbar() {
+    final i = _selIdx;
+    if (i == null || i >= _lines.length) { return const SizedBox.shrink(); }
+    final ln = _lines[i];
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C2232),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+          boxShadow: [BoxShadow(
+            color: Colors.black.withValues(alpha: 0.45),
+            blurRadius: 10, offset: const Offset(0, 3),
+          )],
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          // Drag handle
+          GestureDetector(
+            onPanUpdate: (d) => setState(() {
+              _selToolbarOffset = Offset(
+                (_selToolbarOffset.dx + d.delta.dx)
+                    .clamp(0.0, math.max(0.0, _chartW - 268)).toDouble(),
+                (_selToolbarOffset.dy + d.delta.dy)
+                    .clamp(0.0, math.max(0.0, _chartH - 52)).toDouble(),
+              );
+            }),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 11),
+              child: Icon(Icons.drag_indicator, size: 16, color: Colors.white30),
+            ),
+          ),
+          _fDiv(),
+          Builder(builder: (ctx) => GestureDetector(
+            onTap: () => _showSelColorMenu(ctx, ln),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+              child: Container(
+                width: 16, height: 16,
+                decoration: BoxDecoration(
+                  color: ln.color, shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white38, width: 1.5),
+                ),
+              ),
+            ),
+          )),
+          _fDiv(),
+          Builder(builder: (ctx) => GestureDetector(
+            onTap: () => _showSelWidthMenu(ctx, ln),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              child: Text('${ln.width.toInt()}px', style: const TextStyle(
+                color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600,
+              )),
+            ),
+          )),
+          _fDiv(),
+          Builder(builder: (ctx) => GestureDetector(
+            onTap: () => _showSelStyleMenu(ctx, ln),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+              child: SizedBox(
+                width: 24, height: 10,
+                child: CustomPaint(
+                  painter: _LinePreviewPainter(ln.style, ln.color, ln.width.clamp(1, 2.5)),
+                ),
+              ),
+            ),
+          )),
+          _fDiv(),
+          GestureDetector(
+            onTap: _cloneSel,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+              child: Icon(Icons.copy_outlined, size: 16, color: Colors.white60),
+            ),
+          ),
+          GestureDetector(
+            onTap: _deleteSel,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+              child: Icon(Icons.delete_outline, size: 16,
+                  color: AppColors.red.withValues(alpha: 0.8)),
+            ),
+          ),
+          _fDiv(),
+          GestureDetector(
+            onTap: () => setState(() { _phase = DrawPhase.idle; _selIdx = null; _selEndpoint = null; }),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+              child: Icon(Icons.close, size: 15, color: Colors.white30),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _fDiv() => Container(
+    width: 1, height: 22, color: Colors.white.withValues(alpha: 0.1));
+
+  // ── Indicator picker ──────────────────────────────────────────────────────
+
+  void _showIndicatorPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1F2E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setModal) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.62, minChildSize: 0.4, maxChildSize: 0.88,
+          expand: false,
+          builder: (ctx, scroll) => Column(children: [
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                  color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Row(children: [
+                const Text('보조지표', style: TextStyle(
+                    color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+                const Spacer(),
+                if (_activeIndicators.isNotEmpty)
+                  GestureDetector(
+                    onTap: () { setState(() => _activeIndicators.clear()); setModal(() {}); },
+                    child: Text('전체 해제', style: TextStyle(
+                        color: AppColors.red.withValues(alpha: 0.85), fontSize: 12)),
+                  ),
+              ]),
+            ),
+            Expanded(child: GridView.builder(
+              controller: scroll,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2, crossAxisSpacing: 10,
+                mainAxisSpacing: 10, childAspectRatio: 1.6,
+              ),
+              itemCount: _kIndicators.length,
+              itemBuilder: (_, idx) {
+                final meta   = _kIndicators[idx];
+                final active = _activeIndicators.contains(meta.type);
+                return GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      if (active) {
+                        _activeIndicators.remove(meta.type);
+                      } else {
+                        _activeIndicators.add(meta.type);
+                      }
+                    });
+                    setModal(() {});
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: active
+                          ? AppColors.green.withValues(alpha: 0.1)
+                          : const Color(0xFF252A34),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: active
+                            ? AppColors.green.withValues(alpha: 0.55)
+                            : Colors.white12,
+                      ),
+                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Row(children: [
+                        Expanded(child: Text(meta.name, style: TextStyle(
+                          color: active ? AppColors.green : Colors.white,
+                          fontSize: 13, fontWeight: FontWeight.bold,
+                        ))),
+                        if (active) const Icon(Icons.check_circle, size: 14, color: AppColors.green),
+                      ]),
+                      const SizedBox(height: 2),
+                      Text(meta.shortName, style: const TextStyle(
+                          color: AppColors.gray, fontSize: 10)),
+                      const SizedBox(height: 5),
+                      Expanded(child: Text(meta.description, style: const TextStyle(
+                        color: Color(0xFF8891A4), fontSize: 10, height: 1.4,
+                      ), overflow: TextOverflow.fade)),
+                    ]),
+                  ),
+                );
+              },
+            )),
+          ]),
+        );
+      }),
+    );
+  }
+
+  // ── Popup menus ───────────────────────────────────────────────────────────
 
   void _showSelColorMenu(BuildContext ctx, ChartLine ln) async {
     final box = ctx.findRenderObject() as RenderBox;
@@ -637,28 +1228,23 @@ class _CandleChartState extends State<CandleChart> {
       context: ctx,
       color: const Color(0xFF1A1F2E),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: Colors.white12),
-      ),
+          borderRadius: BorderRadius.circular(8), side: const BorderSide(color: Colors.white12)),
       position: RelativeRect.fromLTRB(pos.dx, pos.dy + box.size.height + 4, pos.dx + 160, 0),
-      items: _colors.map((c) => PopupMenuItem<Color>(
-        value: c,
-        height: 36,
-        child: Row(children: [
-          Container(
-            width: 18, height: 18,
-            decoration: BoxDecoration(
-              color: c, shape: BoxShape.circle,
-              border: ln.color.toARGB32() == c.toARGB32()
-                  ? Border.all(color: Colors.white, width: 2) : null,
-            ),
-          ),
+      items: _kColorOptions.map((col) {
+        final sel = ln.color.toARGB32() == col.toARGB32();
+        return PopupMenuItem<Color>(value: col, height: 36, child: Row(children: [
+          Container(width: 18, height: 18, decoration: BoxDecoration(
+            color: col, shape: BoxShape.circle,
+            border: sel ? Border.all(color: Colors.white, width: 2) : null,
+          )),
           const SizedBox(width: 10),
-          Text(_colorName(c), style: const TextStyle(color: Colors.white70, fontSize: 12)),
-        ]),
-      )).toList(),
+          Text(_colorName(col), style: TextStyle(
+              color: sel ? Colors.white : Colors.white70, fontSize: 12)),
+          if (sel) ...[const Spacer(), const Icon(Icons.check, size: 12, color: AppColors.green)],
+        ]));
+      }).toList(),
     );
-    if (c != null) _updateSel(color: c);
+    if (c != null) { _updateSel(color: c); }
   }
 
   void _showSelWidthMenu(BuildContext ctx, ChartLine ln) async {
@@ -668,110 +1254,107 @@ class _CandleChartState extends State<CandleChart> {
       context: ctx,
       color: const Color(0xFF1A1F2E),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: Colors.white12),
-      ),
-      position: RelativeRect.fromLTRB(pos.dx, pos.dy + box.size.height + 4, pos.dx + 80, 0),
-      items: [1.0, 2.0, 3.0, 4.0].map((w) => PopupMenuItem<double>(
-        value: w,
-        height: 36,
-        child: Row(children: [
-          Container(
-            width: 28, height: (ln.width - w).abs() < 0.1 ? w + 1 : w,
-            color: (ln.width - w).abs() < 0.1 ? AppColors.green : Colors.white54,
-          ),
-          const SizedBox(width: 10),
-          Text('${w.toInt()}px', style: TextStyle(
-            color: (ln.width - w).abs() < 0.1 ? AppColors.green : Colors.white70,
-            fontSize: 12, fontWeight: FontWeight.w600,
-          )),
-        ]),
-      )).toList(),
+          borderRadius: BorderRadius.circular(8), side: const BorderSide(color: Colors.white12)),
+      position: RelativeRect.fromLTRB(pos.dx, pos.dy + box.size.height + 4, pos.dx + 100, 0),
+      items: [1.0, 2.0, 3.0, 4.0].map((wv) {
+        final sel = (ln.width - wv).abs() < 0.1;
+        return PopupMenuItem<double>(value: wv, height: 28, child: SizedBox(width: 66,
+          child: Row(children: [
+            Container(width: 22, height: sel ? wv + 1 : wv, color: sel ? AppColors.green : Colors.white54),
+            const SizedBox(width: 8),
+            Text('${wv.toInt()}px', style: TextStyle(
+                color: sel ? AppColors.green : Colors.white70,
+                fontSize: 11, fontWeight: FontWeight.w600)),
+            if (sel) ...[const Spacer(), const Icon(Icons.check, size: 11, color: AppColors.green)],
+          ]),
+        ));
+      }).toList(),
     );
-    if (w != null) _updateSel(width: w);
+    if (w != null) { _updateSel(width: w); }
+  }
+
+  void _showSelStyleMenu(BuildContext ctx, ChartLine ln) async {
+    final box = ctx.findRenderObject() as RenderBox;
+    final pos = box.localToGlobal(Offset.zero);
+    final s = await showMenu<LineStyle>(
+      context: ctx,
+      color: const Color(0xFF1A1F2E),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8), side: const BorderSide(color: Colors.white12)),
+      position: RelativeRect.fromLTRB(pos.dx, pos.dy + box.size.height + 4, pos.dx + 120, 0),
+      items: LineStyle.values.map((style) {
+        final sel = ln.style == style;
+        return PopupMenuItem<LineStyle>(value: style, height: 32,
+          child: SizedBox(width: 70, child: Row(children: [
+            SizedBox(width: 44, height: 10, child: CustomPaint(
+              painter: _LinePreviewPainter(style, sel ? Colors.white : Colors.white54, 1.5),
+            )),
+            const Spacer(),
+            if (sel) const Icon(Icons.check, size: 11, color: AppColors.green),
+          ])));
+      }).toList(),
+    );
+    if (s != null) { _updateSel(style: s); }
   }
 
   static String _colorName(Color c) {
-    if (c == Colors.white)           return '흰색';
-    if (c == const Color(0xFFFFD700)) return '노란색';
-    if (c == const Color(0xFF4FC3F7)) return '하늘색';
-    if (c == AppColors.green)         return '초록색';
-    if (c == AppColors.red)           return '빨간색';
-    if (c == const Color(0xFFCE93D8)) return '보라색';
-    if (c == const Color(0xFFFF8A65)) return '주황색';
+    if (c == Colors.white)             { return '흰색'; }
+    if (c == const Color(0xFFFFD700))  { return '노란색'; }
+    if (c == const Color(0xFF4FC3F7))  { return '하늘색'; }
+    if (c == AppColors.green)          { return '초록색'; }
+    if (c == AppColors.red)            { return '빨간색'; }
+    if (c == const Color(0xFFCE93D8))  { return '보라색'; }
+    if (c == const Color(0xFFFF8A65))  { return '주황색'; }
     return '';
   }
+}
 
-  Widget _div() => Container(
-    width: 1, height: 20, margin: const EdgeInsets.symmetric(horizontal: 6),
-    color: Colors.white12,
-  );
+// ─── Line preview painter ────────────────────────────────────────────────────
 
-  Widget _styleBtn(ChartLine ln, LineStyle s, String sym) {
-    final sel = ln.style == s;
-    return GestureDetector(
-      onTap: () => _updateSel(style: s),
-      child: Container(
-        height: 28, padding: const EdgeInsets.symmetric(horizontal: 8),
-        margin: const EdgeInsets.symmetric(horizontal: 2),
-        decoration: BoxDecoration(
-          color: sel ? AppColors.green.withValues(alpha: 0.2) : Colors.transparent,
-          borderRadius: BorderRadius.circular(4),
-          border: sel ? Border.all(color: AppColors.green.withValues(alpha: 0.5)) : null,
-        ),
-        child: Center(child: Text(sym, style: TextStyle(
-          fontSize: 11, fontWeight: FontWeight.w600,
-          color: sel ? AppColors.green : AppColors.gray,
-        ))),
-      ),
-    );
+class _LinePreviewPainter extends CustomPainter {
+  final LineStyle style;
+  final Color color;
+  final double lineWidth;
+  const _LinePreviewPainter(this.style, this.color, this.lineWidth);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p1 = Offset(0, size.height / 2);
+    final p2 = Offset(size.width, size.height / 2);
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = lineWidth
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    switch (style) {
+      case LineStyle.solid:  canvas.drawLine(p1, p2, paint);
+      case LineStyle.dashed: _dash(canvas, p1, p2, paint, dash: 6, gap: 4);
+      case LineStyle.dotted: _dot(canvas, p1, p2);
+    }
   }
 
-  Widget _actBtn(String label, IconData icon, Color col) => Container(
-    height: 28, padding: const EdgeInsets.symmetric(horizontal: 8),
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(4),
-      border: Border.all(color: col.withValues(alpha: 0.4)),
-    ),
-    child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(icon, size: 12, color: col),
-      const SizedBox(width: 3),
-      Text(label, style: TextStyle(fontSize: 10, color: col, fontWeight: FontWeight.w500)),
-    ]),
-  );
-
-  void _showColorSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF1A1F2E),
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('기본 선 색상', style: TextStyle(
-                color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 16),
-            Wrap(spacing: 12, runSpacing: 12,
-              children: _colors.map((c) => GestureDetector(
-                onTap: () { setState(() => _dColor = c); Navigator.pop(context); },
-                child: Container(width: 36, height: 36,
-                  decoration: BoxDecoration(
-                    color: c, shape: BoxShape.circle,
-                    border: _dColor.toARGB32() == c.toARGB32()
-                        ? Border.all(color: Colors.white, width: 2.5) : null,
-                  ),
-                ),
-              )).toList(),
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
-    );
+  void _dash(Canvas c, Offset p1, Offset p2, Paint paint, {double dash=4, double gap=4}) {
+    final d = p2 - p1; final len = d.distance; if (len == 0) { return; }
+    final u = d / len; double pos = 0; bool draw = true;
+    while (pos < len) {
+      final seg = math.min(pos + (draw ? dash : gap), len);
+      if (draw) { c.drawLine(p1 + u * pos, p1 + u * seg, paint); }
+      pos = seg; draw = !draw;
+    }
   }
+
+  void _dot(Canvas c, Offset p1, Offset p2) {
+    final d = p2 - p1; final len = d.distance; if (len == 0) { return; }
+    final u = d / len; final gap = lineWidth * 3.5; double pos = lineWidth / 2;
+    while (pos < len) {
+      c.drawCircle(p1 + u * pos, lineWidth / 2, Paint()..color = color);
+      pos += gap;
+    }
+  }
+
+  @override
+  bool shouldRepaint(_LinePreviewPainter o) =>
+      style != o.style || color != o.color || lineWidth != o.lineWidth;
 }
 
 // ─── Painter ─────────────────────────────────────────────────────────────────
@@ -781,7 +1364,8 @@ class _Painter extends CustomPainter {
   final double vis, scroll, pzoom;
   final Offset? cross;
   final String prefix;
-  final bool showRsi;
+  final Set<IndicatorType> activeIndicators;
+  final Map<IndicatorType, IndicatorConfig> indConfigs;
   final List<ChartLine> lines;
   final int? selIdx;
   final DrawPhase phase;
@@ -789,100 +1373,137 @@ class _Painter extends CustomPainter {
   final int? fpTime;
   final double? fpPrice;
 
-  static const _axisW = 58.0;
-  static const _timeH = 26.0;
-  static const _volR  = 0.18;
-  static const _indH  = 80.0;
+  static const _axisW    = 58.0;
+  static const _timeH    = 26.0;
+  static const _volR     = 0.18;
+  static const _panelH   = 80.0;
+  static const _futureBuf = 130;
 
   _Painter({
     required this.candles, required this.vis, required this.scroll,
     required this.pzoom,   required this.cross, required this.prefix,
-    required this.showRsi, required this.lines, required this.selIdx,
+    required this.activeIndicators, required this.indConfigs,
+    required this.lines, required this.selIdx,
     required this.phase,   required this.cursor,
     required this.fpTime,  required this.fpPrice,
   });
 
+  bool _indVisible(IndicatorType t) =>
+      activeIndicators.contains(t) && (indConfigs[t]?.visible ?? true);
+
   @override
   void paint(Canvas canvas, Size size) {
-    if (candles.isEmpty) return;
+    if (candles.isEmpty) { return; }
     canvas.save();
     canvas.clipRect(Offset.zero & size);
 
-    final hasInd  = showRsi && candles.length > 15;
-    final indH    = hasInd ? _indH : 0.0;
+    final mx          = math.max(0.0, candles.length.toDouble() - vis);
+    final off         = scroll.clamp(-_futureBuf.toDouble(), mx);
+    final futureSlots = off < 0 ? (-off).round().clamp(0, _futureBuf) : 0;
+    final normalOff   = math.max(0.0, off);
+    final e        = (candles.length - normalOff.round()).clamp(0, candles.length);
+    final wantData = (vis.ceil() - futureSlots).clamp(0, candles.length);
+    final s        = (e - wantData).clamp(0, candles.length);
+    final vc       = candles.sublist(s, e);
+    if (vc.isEmpty) { canvas.restore(); return; }
+    final rp = (vis - vc.length - futureSlots).clamp(0.0, double.infinity);
+
+    final panelCount  = activeIndicators.where((t) => _panelIndicatorTypes.contains(t) && (indConfigs[t]?.visible ?? true)).length;
+    final totalPanelH = panelCount * _panelH;
     final chartW  = size.width - _axisW;
-    final usableH = size.height - _timeH - indH;
-    final pH      = usableH * (1 - _volR);
-    final vH      = usableH * _volR;
-    final cw      = chartW / vis;
+    final usableH = size.height - _timeH - totalPanelH;
+    final pH = usableH * (1 - _volR);
+    final vH = usableH * _volR;
+    final cw = chartW / vis;
 
-    final mx  = math.max(0.0, candles.length.toDouble() - vis);
-    final off = scroll.clamp(0.0, mx);
-    final e   = (candles.length - off.toInt()).clamp(0, candles.length);
-    final s   = (e - vis.ceil()).clamp(0, candles.length);
-    final vc  = candles.sublist(s, e);
-    if (vc.isEmpty) return;
-    final rp = vis - vc.length;
-
-    // price range
     double lo = vc[0].low, hi = vc[0].high, mv = vc[0].volume;
     for (final c in vc) {
-      if (c.low  < lo) lo = c.low;
-      if (c.high > hi) hi = c.high;
-      if (c.volume > mv) mv = c.volume;
+      if (c.low  < lo) { lo = c.low; }
+      if (c.high > hi) { hi = c.high; }
+      if (c.volume > mv) { mv = c.volume; }
     }
-    final pad  = (hi - lo) * 0.06;
-    final cent = (hi + lo) / 2;
-    final half = (hi - lo) / 2 + pad;
-    final pMin = cent - half / pzoom;
-    final pMax = cent + half / pzoom;
+    final pad   = (hi - lo) * 0.06;
+    final cent  = (hi + lo) / 2;
+    final half  = (hi - lo) / 2 + pad;
+    final pMin  = cent - half / pzoom;
+    final pMax  = cent + half / pzoom;
     final pSpan = pMax - pMin;
-    if (pSpan <= 0) return;
+    if (pSpan <= 0) { canvas.restore(); return; }
 
-    double py(double p) => pH - (p - pMin) / pSpan * pH;
-    double vy(double v) => mv > 0 ? (v / mv) * vH * 0.9 : 0;
+    double pyF(double p) => pH - (p - pMin) / pSpan * pH;
+    double vyF(double v) => mv > 0 ? (v / mv) * vH * 0.9 : 0;
 
-    // grid
+    // Grid
     final grid = Paint()..color = const Color(0xFF252A34)..strokeWidth = 0.5;
-    for (var i = 1; i < 5; i++) canvas.drawLine(Offset(0, pH * i / 5), Offset(chartW, pH * i / 5), grid);
+    for (var i = 1; i < 5; i++) {
+      canvas.drawLine(Offset(0, pH * i / 5), Offset(chartW, pH * i / 5), grid);
+    }
     canvas.drawLine(Offset(0, pH), Offset(chartW, pH), grid);
 
-    // stored lines (behind candles)
-    _drawLines(canvas, vc, s, chartW, pH, py, cw, rp);
-
-    // candles (clipped to price zone)
-    canvas.save();
-    canvas.clipRect(Rect.fromLTWH(0, 0, chartW, pH));
-    for (var i = 0; i < vc.length; i++) {
-      final c   = vc[i];
-      final x   = (rp + i + 0.5) * cw;
-      final up  = c.close >= c.open;
-      final col = up ? AppColors.green : AppColors.red;
-      final bw  = math.max(cw * 0.65, 1.0);
-      canvas.drawLine(Offset(x, py(c.high)), Offset(x, py(c.low)),
-          Paint()..color = col..strokeWidth = math.max(cw * 0.12, 0.8));
-      final t = py(math.max(c.open, c.close));
-      final b = py(math.min(c.open, c.close));
-      canvas.drawRect(Rect.fromLTWH(x - bw / 2, t, bw, math.max(b - t, 1.0)), Paint()..color = col);
+    // Overlay indicators
+    canvas.save(); canvas.clipRect(Rect.fromLTWH(0, 0, chartW, pH));
+    if (_indVisible(IndicatorType.bollingerBands)) {
+      _drawBB(canvas, candles, vc, s, pyF, cw, rp);
+    }
+    if (_indVisible(IndicatorType.ichimoku)) {
+      _drawIchimoku(canvas, candles, vc, s, pyF, cw, rp, futureSlots);
     }
     canvas.restore();
 
-    // volume
+    // Candles
+    canvas.save(); canvas.clipRect(Rect.fromLTWH(0, 0, chartW, pH));
+    for (var i = 0; i < vc.length; i++) {
+      final c  = vc[i];
+      final x  = (rp + i + 0.5) * cw;
+      final up = c.close >= c.open;
+      final col = up ? AppColors.green : AppColors.red;
+      final bw  = math.max(cw * 0.65, 1.0);
+      canvas.drawLine(Offset(x, pyF(c.high)), Offset(x, pyF(c.low)),
+          Paint()..color = col..strokeWidth = math.max(cw * 0.12, 0.8));
+      final t = pyF(math.max(c.open, c.close));
+      final b = pyF(math.min(c.open, c.close));
+      canvas.drawRect(Rect.fromLTWH(x - bw / 2, t, bw, math.max(b - t, 1.0)),
+          Paint()..color = col);
+    }
+    canvas.restore();
+
+    if (_indVisible(IndicatorType.movingAverage)) {
+      canvas.save(); canvas.clipRect(Rect.fromLTWH(0, 0, chartW, pH));
+      _drawMA(canvas, candles, vc, s, pyF, cw, rp);
+      canvas.restore();
+    }
+
+    // Volume
     for (var i = 0; i < vc.length; i++) {
       final c  = vc[i];
       final x  = (rp + i + 0.5) * cw;
       final bw = math.max(cw * 0.65, 1.0);
-      final vh = vy(c.volume);
+      final vh = vyF(c.volume);
       canvas.drawRect(
         Rect.fromLTWH(x - bw / 2, pH + vH - vh, bw, vh),
-        Paint()..color = (c.close >= c.open ? AppColors.green : AppColors.red).withValues(alpha: 0.35),
+        Paint()..color = (c.close >= c.open ? AppColors.green : AppColors.red)
+            .withValues(alpha: 0.35),
       );
     }
 
-    // RSI
-    if (hasInd) _drawRsi(canvas, candles, vc, s, chartW, pH + vH, _indH, cw, rp, size);
+    // Trend lines
+    _drawLines(canvas, vc, chartW, pH, pyF, cw, rp);
 
-    // price axis labels
+    // Panel indicators
+    double panY = usableH + _timeH;
+    for (final pt in [IndicatorType.rsi, IndicatorType.macd, IndicatorType.stochastic]) {
+      if (!_indVisible(pt)) { continue; }
+      _drawPanelBg(canvas, panY, chartW);
+      switch (pt) {
+        case IndicatorType.rsi:        _drawRsi(canvas, candles, vc, s, chartW, panY, cw, rp);
+        case IndicatorType.macd:       _drawMacd(canvas, candles, vc, s, chartW, panY, cw, rp);
+        case IndicatorType.stochastic: _drawStochastic(canvas, candles, vc, s, chartW, panY, cw, rp);
+        default: break;
+      }
+      panY += _panelH;
+    }
+
+    // Price axis labels
     final tp = TextPainter(textDirection: TextDirection.ltr);
     for (var i = 1; i <= 4; i++) {
       final p = pMax - pSpan * i / 4;
@@ -892,55 +1513,76 @@ class _Painter extends CustomPainter {
       tp.paint(canvas, Offset(chartW + 4, y - tp.height / 2));
     }
 
-    // time axis
-    final avgI = vc.length >= 2
+    // Time axis labels (past + future, no overlap)
+    final avgI   = vc.length >= 2
         ? (vc.last.time - vc.first.time) / math.max(1, vc.length - 1)
         : 86400.0;
-    final hhmm  = avgI < 14400;
-    final mmdd  = avgI < 172800;
+    final hhmm   = avgI < 14400;
+    final mmdd   = avgI < 172800;
     final yyyymm = avgI < 5184000;
 
     String tfmt(int t) {
       final dt = DateTime.fromMillisecondsSinceEpoch(t * 1000, isUtc: true);
-      if (hhmm)   return '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
-      if (mmdd)   return '${dt.month}/${dt.day}';
-      if (yyyymm) return '${dt.year}/${dt.month.toString().padLeft(2,'0')}';
+      if (hhmm)   { return '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}'; }
+      if (mmdd)   { return '${dt.month}/${dt.day}'; }
+      if (yyyymm) { return '${dt.year}/${dt.month.toString().padLeft(2,'0')}'; }
       return '${dt.year}';
     }
 
-    final lpw = hhmm ? 34.0 : mmdd ? 26.0 : yyyymm ? 46.0 : 30.0;
-    final minStep = math.max(1, ((lpw + 8) / math.max(cw, 0.1)).ceil());
-    int step;
-    if (!hhmm && !mmdd && !yyyymm) {
-      int fs = math.max(1, (5.0 * 365 * 86400 / avgI).round());
-      if (fs > 2) { fs = ((fs / 5.0).round() * 5); if (fs < 1) fs = 1; }
-      step = math.max(minStep, fs);
-    } else {
-      step = math.max(minStep, math.max(1, (vc.length / 6).round()));
-    }
-    if (step < 1) step = 1;
+    final lpw    = hhmm ? 34.0 : mmdd ? 26.0 : yyyymm ? 46.0 : 30.0;
+    final minStp = math.max(1, ((lpw + 8) / math.max(cw, 0.1)).ceil());
+    final step   = math.max(minStp, math.max(1, (vc.length / 6).round()));
+    final xAxisY = usableH + 4;
+    double lastLabelX = -lpw * 2;
 
-    final xAxisY = size.height - indH - _timeH + 4;
     for (var i = 0; i < vc.length; i += step) {
       final x = (rp + i + 0.5) * cw;
-      tp.text = TextSpan(text: tfmt(vc[i].time), style: const TextStyle(color: AppColors.gray, fontSize: 10));
+      if (x - lastLabelX < lpw + 4) { continue; }
+      tp.text = TextSpan(text: tfmt(vc[i].time),
+          style: const TextStyle(color: AppColors.gray, fontSize: 10));
       tp.layout();
-      if (x + tp.width / 2 < chartW) tp.paint(canvas, Offset(x - tp.width / 2, xAxisY));
+      if (x + tp.width / 2 < chartW) {
+        tp.paint(canvas, Offset(x - tp.width / 2, xAxisY));
+        lastLabelX = x;
+      }
     }
 
-    // normal crosshair (only when idle)
+    // Future time axis labels (dimmer, skip if overlap with last past label)
+    if (futureSlots > 0) {
+      final lastTime = vc.last.time;
+      for (var fi = 0; fi < futureSlots; fi += step) {
+        final x = (rp + vc.length + fi + 0.5) * cw;
+        if (x > chartW) { break; }
+        if (x - lastLabelX < lpw + 4) { continue; }
+        final futureT = (lastTime + (fi + 1) * avgI).round();
+        tp.text = TextSpan(text: tfmt(futureT),
+            style: const TextStyle(color: Color(0xFF4A5368), fontSize: 10));
+        tp.layout();
+        if (x + tp.width / 2 < chartW) {
+          tp.paint(canvas, Offset(x - tp.width / 2, xAxisY));
+          lastLabelX = x;
+        }
+      }
+    }
+
+    // Crosshair
     if (cross != null && phase == DrawPhase.idle) {
       final pos  = cross!;
       final slot = ((pos.dx / cw) - rp).round().clamp(0, vc.length - 1);
       final sx   = (rp + slot + 0.5) * cw;
       final c    = vc[slot];
       final dash = Paint()..color = AppColors.gray.withValues(alpha: 0.7)..strokeWidth = 0.8;
-      _dashed(canvas, Offset(sx, 0), Offset(sx, usableH + indH), dash);
+      _dashed(canvas, Offset(sx, 0), Offset(sx, size.height), dash);
       if (pos.dy >= 0 && pos.dy < pH) {
         _dashed(canvas, Offset(0, pos.dy), Offset(chartW, pos.dy), dash);
         final pr = pMin + (1 - pos.dy / pH) * pSpan;
         _axisLabel(canvas, chartW + 4, pos.dy, _fmt(pr), center: false);
       }
+      // Volume label at right axis, in volume zone
+      final volStr = _fmtVol(c.volume);
+      _axisLabel(canvas, chartW + 4, pH + vH / 2, volStr,
+          center: false, color: Colors.white54);
+
       final dtc = DateTime.fromMillisecondsSinceEpoch(c.time * 1000, isUtc: true);
       final cl = hhmm
           ? '${dtc.hour.toString().padLeft(2,'0')}:${dtc.minute.toString().padLeft(2,'0')}'
@@ -948,7 +1590,7 @@ class _Painter extends CustomPainter {
       _axisLabel(canvas, sx, xAxisY, cl, center: true);
     }
 
-    // drawing cursor + anchors
+    // Drawing cursor
     if (phase == DrawPhase.placingFirst || phase == DrawPhase.placingSecond) {
       final cur = cursor;
       if (cur != null) {
@@ -958,22 +1600,21 @@ class _Painter extends CustomPainter {
         _drawAnchor(canvas, cur, AppColors.green);
         if (cur.dy >= 0 && cur.dy < pH) {
           final pr = pMin + (1 - cur.dy / pH) * pSpan;
-          _axisLabel(canvas, chartW + 4, cur.dy, _fmt(pr), center: false, color: AppColors.green);
+          _axisLabel(canvas, chartW + 4, cur.dy, _fmt(pr),
+              center: false, color: AppColors.green);
         }
       }
-
-      // first anchor + preview line when placing second point
       if (phase == DrawPhase.placingSecond && fpTime != null && fpPrice != null) {
         double? fx;
         for (int i = 0; i < vc.length; i++) {
           if (vc[i].time >= fpTime!) { fx = (rp + i + 0.5) * cw; break; }
         }
-        final fy = py(fpPrice!);
+        final fy = pyF(fpPrice!);
         if (fx != null) {
           _drawAnchor(canvas, Offset(fx, fy), AppColors.green);
           if (cur != null) {
             canvas.drawLine(Offset(fx, fy), cur,
-              Paint()..color = AppColors.green.withValues(alpha: 0.5)..strokeWidth = 1.5);
+                Paint()..color = AppColors.green.withValues(alpha: 0.5)..strokeWidth = 1.5);
           }
         }
       }
@@ -982,78 +1623,311 @@ class _Painter extends CustomPainter {
     canvas.restore();
   }
 
-  // ── anchor circle ─────────────────────────────────────────────────────
-  void _drawAnchor(Canvas canvas, Offset pos, Color color) {
-    canvas.drawCircle(pos, 7, Paint()..color = color.withValues(alpha: 0.15));
-    canvas.drawCircle(pos, 7, Paint()..color = color..strokeWidth = 1.5..style = PaintingStyle.stroke);
-    canvas.drawCircle(pos, 2.5, Paint()..color = color);
+  // ── Indicator drawing ─────────────────────────────────────────────────────
+
+  void _drawPanelBg(Canvas canvas, double panY, double chartW) {
+    canvas.drawRect(Rect.fromLTWH(0, panY, chartW + _axisW, _panelH),
+        Paint()..color = const Color(0xFF0D1117));
+    canvas.drawLine(Offset(0, panY), Offset(chartW + _axisW, panY),
+        Paint()..color = const Color(0xFF252A34)..strokeWidth = 0.5);
   }
 
-  // ── stored lines ──────────────────────────────────────────────────────
-  void _drawLines(Canvas canvas, List<CandleData> vc, int startIdx,
-      double chartW, double pH, double Function(double) py,
-      double cw, double rp) {
-
-    for (int idx = 0; idx < lines.length; idx++) {
-      final ln  = lines[idx];
-      final sel = idx == selIdx;
-      final w   = sel ? ln.width + 1.0 : ln.width;
-      final col = sel ? ln.color : ln.color.withValues(alpha: 0.85);
-
-      void drawSeg(Offset p1, Offset p2) {
-        final paint = Paint()..color = col..strokeWidth = w..style = PaintingStyle.stroke;
-        switch (ln.style) {
-          case LineStyle.solid:
-            canvas.drawLine(p1, p2, paint);
-          case LineStyle.dashed:
-            _dashed(canvas, p1, p2, paint, dash: 8, gap: 5);
-          case LineStyle.dotted:
-            _dotted(canvas, p1, p2, col, w);
-        }
+  void _drawMA(Canvas canvas, List<CandleData> all, List<CandleData> vc,
+      int si, double Function(double) pyFn, double cw, double rp) {
+    final cfg     = indConfigs[IndicatorType.movingAverage] ?? _kDefaultConfigs[IndicatorType.movingAverage]!;
+    final periods = cfg.params.map((p) => p.toInt()).toList();
+    final colors  = cfg.colors;
+    for (int pi = 0; pi < periods.length; pi++) {
+      final period = periods[pi];
+      final color  = pi < colors.length ? colors[pi] : Colors.white;
+      final path = Path(); bool started = false;
+      for (int i = 0; i < vc.length; i++) {
+        final ai = si + i;
+        if (ai < period - 1) { continue; }
+        double sum = 0;
+        for (int j = ai - period + 1; j <= ai; j++) { sum += all[j].close; }
+        final x = (rp + i + 0.5) * cw;
+        final y = pyFn(sum / period);
+        if (!started) { path.moveTo(x, y); started = true; } else { path.lineTo(x, y); }
       }
-
-      if (ln.isHorizontal) {
-        final y = py(ln.startPrice);
-        if (y >= -1 && y <= pH + 1) drawSeg(Offset(0, y), Offset(chartW, y));
-        if (sel) {
-          _axisLabel(canvas, chartW + 4, y, _fmt(ln.startPrice), center: false, color: ln.color);
-        }
-        continue;
-      }
-
-      double? txToX(int t) {
-        for (int i = 0; i < vc.length; i++) {
-          if (vc[i].time >= t) return (rp + i + 0.5) * cw;
-        }
-        return null;
-      }
-
-      final x1 = txToX(ln.startTime);
-      final x2 = txToX(ln.endTime);
-      if (x1 == null && x2 == null) continue;
-
-      final y1 = py(ln.startPrice);
-      final y2 = py(ln.endPrice);
-      drawSeg(Offset(x1 ?? 0, y1), Offset(x2 ?? chartW, y2));
-
-      if (sel) {
-        for (final pt in [Offset(x1 ?? 0, y1), Offset(x2 ?? chartW, y2)]) {
-          canvas.drawCircle(pt, 5, Paint()..color = ln.color.withValues(alpha: 0.25));
-          canvas.drawCircle(pt, 5,
-              Paint()..color = ln.color..strokeWidth = 1..style = PaintingStyle.stroke);
-        }
-      }
+      canvas.drawPath(path,
+          Paint()..color = color..strokeWidth = 1.0..style = PaintingStyle.stroke);
     }
   }
 
-  // ── RSI ──────────────────────────────────────────────────────────────
-  void _drawRsi(Canvas canvas, List<CandleData> all, List<CandleData> vc,
-      int si, double chartW, double panY, double panH,
-      double cw, double rp, Size size) {
-    const period = 14;
-    if (all.length < period + 1) return;
+  void _drawBB(Canvas canvas, List<CandleData> all, List<CandleData> vc,
+      int si, double Function(double) pyFn, double cw, double rp) {
+    final cfg    = indConfigs[IndicatorType.bollingerBands] ?? _kDefaultConfigs[IndicatorType.bollingerBands]!;
+    final period = cfg.params[0].toInt();
+    final mult   = cfg.params.length > 1 ? cfg.params[1] : 2.0;
+    final bandC  = cfg.colors.isNotEmpty ? cfg.colors[0] : const Color(0xFF4FC3F7);
+    final midC   = cfg.colors.length > 1 ? cfg.colors[1] : const Color(0xFF78909C);
 
+    final upPts = <Offset>[], midPts = <Offset>[], loPts = <Offset>[];
+    for (int i = 0; i < vc.length; i++) {
+      final ai = si + i;
+      if (ai < period - 1) { continue; }
+      double sum = 0;
+      for (int j = ai - period + 1; j <= ai; j++) { sum += all[j].close; }
+      final sma = sum / period;
+      double vari = 0;
+      for (int j = ai - period + 1; j <= ai; j++) { vari += math.pow(all[j].close - sma, 2); }
+      final sd = math.sqrt(vari / period);
+      final x  = (rp + i + 0.5) * cw;
+      upPts.add(Offset(x, pyFn(sma + mult * sd)));
+      midPts.add(Offset(x, pyFn(sma)));
+      loPts.add(Offset(x, pyFn(sma - mult * sd)));
+    }
+    if (upPts.isEmpty) { return; }
+    final fill = Path()..moveTo(upPts.first.dx, upPts.first.dy);
+    for (final p in upPts) { fill.lineTo(p.dx, p.dy); }
+    for (final p in loPts.reversed) { fill.lineTo(p.dx, p.dy); }
+    fill.close();
+    canvas.drawPath(fill, Paint()..color = bandC.withValues(alpha: 0.06));
+    void drl(List<Offset> pts, Paint p) {
+      if (pts.isEmpty) { return; }
+      final path = Path()..moveTo(pts.first.dx, pts.first.dy);
+      for (final pt in pts) { path.lineTo(pt.dx, pt.dy); }
+      canvas.drawPath(path, p);
+    }
+    drl(upPts,  Paint()..color = bandC.withValues(alpha: 0.5)..strokeWidth = 0.8..style = PaintingStyle.stroke);
+    drl(midPts, Paint()..color = midC.withValues(alpha: 0.7)..strokeWidth = 0.8..style = PaintingStyle.stroke);
+    drl(loPts,  Paint()..color = bandC.withValues(alpha: 0.5)..strokeWidth = 0.8..style = PaintingStyle.stroke);
+  }
+
+  void _drawIchimoku(Canvas canvas, List<CandleData> all, List<CandleData> vc,
+      int si, double Function(double) pyFn, double cw, double rp, int futureSlots) {
+    final cfg  = indConfigs[IndicatorType.ichimoku] ?? _kDefaultConfigs[IndicatorType.ichimoku]!;
+    final tenP = cfg.params[0].toInt();
+    final kijP = cfg.params.length > 1 ? cfg.params[1].toInt() : 26;
+    final spanP= cfg.params.length > 2 ? cfg.params[2].toInt() : 52;
+    final cols = cfg.colors;
+    final tenC = cols.isNotEmpty     ? cols[0] : const Color(0xFFEF5350);
+    final kijC = cols.length > 1     ? cols[1] : const Color(0xFF1976D2);
+    final spAC = cols.length > 2     ? cols[2] : AppColors.green;
+    final spBC = cols.length > 3     ? cols[3] : AppColors.red;
+
+    double calcMid(int endIdx, int n) {
+      final start = math.max(0, endIdx - n + 1);
+      double lo = all[start].low, hi = all[start].high;
+      for (int j = start + 1; j <= endIdx; j++) {
+        if (all[j].low < lo) { lo = all[j].low; }
+        if (all[j].high > hi) { hi = all[j].high; }
+      }
+      return (hi + lo) / 2;
+    }
+
+    final tenPts = <Offset>[], kijPts = <Offset>[], spAPts = <Offset>[], spBPts = <Offset>[];
+    final total  = vc.length + futureSlots;
+    for (int slot = 0; slot < total; slot++) {
+      final x       = (rp + slot + 0.5) * cw;
+      final dataIdx = si + slot;
+      final spanSrc = dataIdx - kijP;
+      if (slot < vc.length && dataIdx < all.length) {
+        if (dataIdx >= tenP - 1) { tenPts.add(Offset(x, pyFn(calcMid(dataIdx, tenP)))); }
+        if (dataIdx >= kijP - 1) { kijPts.add(Offset(x, pyFn(calcMid(dataIdx, kijP)))); }
+      }
+      if (spanSrc >= kijP - 1 && spanSrc < all.length) {
+        final tk = calcMid(spanSrc, tenP);
+        final kj = calcMid(spanSrc, kijP);
+        final sA = (tk + kj) / 2;
+        final sB = spanSrc >= spanP - 1 ? calcMid(spanSrc, spanP) : calcMid(spanSrc, spanSrc + 1);
+        spAPts.add(Offset(x, pyFn(sA)));
+        spBPts.add(Offset(x, pyFn(sB)));
+      }
+    }
+    if (spAPts.length >= 2 && spAPts.length == spBPts.length) {
+      for (int i = 0; i < spAPts.length - 1; i++) {
+        final fill = Path()
+          ..moveTo(spAPts[i].dx, spAPts[i].dy)
+          ..lineTo(spAPts[i+1].dx, spAPts[i+1].dy)
+          ..lineTo(spBPts[i+1].dx, spBPts[i+1].dy)
+          ..lineTo(spBPts[i].dx, spBPts[i].dy)
+          ..close();
+        canvas.drawPath(fill, Paint()
+          ..color = (spAPts[i].dy < spBPts[i].dy ? spAC : spBC).withValues(alpha: 0.08));
+      }
+    }
+    void drl(List<Offset> pts, Color color, {double w = 1.0}) {
+      if (pts.isEmpty) { return; }
+      final path = Path()..moveTo(pts.first.dx, pts.first.dy);
+      for (final p in pts) { path.lineTo(p.dx, p.dy); }
+      canvas.drawPath(path, Paint()..color = color..strokeWidth = w..style = PaintingStyle.stroke);
+    }
+    drl(spAPts, spAC.withValues(alpha: 0.6));
+    drl(spBPts, spBC.withValues(alpha: 0.6));
+    drl(kijPts, kijC, w: 1.2);
+    drl(tenPts, tenC, w: 1.0);
+  }
+
+  void _drawRsi(Canvas canvas, List<CandleData> all, List<CandleData> vc,
+      int si, double chartW, double panY, double cw, double rp) {
+    final cfg    = indConfigs[IndicatorType.rsi] ?? _kDefaultConfigs[IndicatorType.rsi]!;
+    final period = cfg.params[0].toInt();
+    final color  = cfg.colors.isNotEmpty ? cfg.colors[0] : const Color(0xFF7E57C2);
+    if (all.length < period + 1) { return; }
+    final rsi = _calcRsi(all, period);
+
+    const labelH = 16.0;
+    double ryF(double v) => panY + labelH + (_panelH - labelH - 4) * (1 - v / 100);
+    final gp = Paint()..color = const Color(0xFF2A3040)..strokeWidth = 0.5;
+    for (final lv in [30.0, 70.0]) {
+      canvas.drawLine(Offset(0, ryF(lv)), Offset(chartW, ryF(lv)), gp);
+    }
+    final path = Path(); bool started = false;
+    for (int i = 0; i < vc.length; i++) {
+      final ai = si + i;
+      if (ai >= rsi.length) { break; }
+      final x = (rp + i + 0.5) * cw;
+      final y = ryF(rsi[ai]);
+      if (!started) { path.moveTo(x, y); started = true; } else { path.lineTo(x, y); }
+    }
+    canvas.drawPath(path, Paint()..color = color..strokeWidth = 1.2..style = PaintingStyle.stroke);
+
+    final lastIdx = si + vc.length - 1;
+    final lv      = lastIdx < rsi.length ? rsi[lastIdx] : 50.0;
+    final tp = TextPainter(text: TextSpan(children: [
+      TextSpan(text: 'RSI($period)  ', style: const TextStyle(color: Color(0xFF5A6270), fontSize: 9)),
+      TextSpan(text: lv.toStringAsFixed(1), style: TextStyle(color: color, fontSize: 9)),
+    ]), textDirection: TextDirection.ltr)..layout();
+    tp.paint(canvas, Offset(4, panY + 3));
+    for (final lv2 in [30.0, 70.0]) {
+      final lvTp = TextPainter(text: TextSpan(text: lv2.toStringAsFixed(0),
+          style: const TextStyle(color: Color(0xFF5A6270), fontSize: 8)),
+          textDirection: TextDirection.ltr)..layout();
+      lvTp.paint(canvas, Offset(chartW + 4, ryF(lv2) - lvTp.height / 2));
+    }
+  }
+
+  void _drawMacd(Canvas canvas, List<CandleData> all, List<CandleData> vc,
+      int si, double chartW, double panY, double cw, double rp) {
+    final cfg    = indConfigs[IndicatorType.macd] ?? _kDefaultConfigs[IndicatorType.macd]!;
+    final fast   = cfg.params[0].toInt();
+    final slow   = cfg.params.length > 1 ? cfg.params[1].toInt() : 26;
+    final sig    = cfg.params.length > 2 ? cfg.params[2].toInt() : 9;
+    final macdC  = cfg.colors.isNotEmpty ? cfg.colors[0] : const Color(0xFF26C6DA);
+    final sigC   = cfg.colors.length > 1 ? cfg.colors[1] : const Color(0xFFFF9800);
+    if (all.length < slow + 1) { return; }
+    final closes = all.map((c) => c.close).toList();
+    final ema1   = _ema(closes, fast);
+    final ema2   = _ema(closes, slow);
+    final macd   = List.generate(all.length, (i) => ema1[i] - ema2[i]);
+    final signal = _ema(macd, sig);
+    final hist   = List.generate(all.length, (i) => macd[i] - signal[i]);
+
+    double mn = double.infinity, mx = double.negativeInfinity;
+    for (int i = 0; i < vc.length; i++) {
+      final ai = si + i; if (ai >= macd.length) { break; }
+      for (final v in [macd[ai], signal[ai], hist[ai]]) {
+        if (v < mn) { mn = v; } if (v > mx) { mx = v; }
+      }
+    }
+    if (mx == mn) { return; }
+    const labelH = 16.0;
+    double vyF(double v) => panY + labelH + (_panelH - labelH - 4) * (1 - (v - mn) / (mx - mn));
+    final zero = vyF(0.0).clamp(panY + labelH, panY + _panelH - 4);
+    canvas.drawLine(Offset(0, zero), Offset(chartW, zero),
+        Paint()..color = Colors.white12..strokeWidth = 0.5);
+
+    for (int i = 0; i < vc.length; i++) {
+      final ai = si + i; if (ai >= hist.length) { break; }
+      final x  = (rp + i + 0.5) * cw; final bw = math.max(cw * 0.6, 1.0);
+      final hv = hist[ai]; final top = vyF(hv); final bot = zero;
+      canvas.drawRect(Rect.fromLTWH(x - bw/2, math.min(top, bot), bw, (top-bot).abs()),
+          Paint()..color = (hv >= 0 ? AppColors.green : AppColors.red).withValues(alpha: 0.5));
+    }
+    void drl(List<double> vals, Color col, double w) {
+      final path = Path(); bool st = false;
+      for (int i = 0; i < vc.length; i++) {
+        final ai = si + i; if (ai >= vals.length) { break; }
+        final x = (rp + i + 0.5) * cw; final y = vyF(vals[ai]);
+        if (!st) { path.moveTo(x, y); st = true; } else { path.lineTo(x, y); }
+      }
+      canvas.drawPath(path, Paint()..color = col..strokeWidth = w..style = PaintingStyle.stroke);
+    }
+    drl(macd, macdC, 1.2); drl(signal, sigC, 1.0);
+    final li = si + vc.length - 1;
+    final lm = li < macd.length ? macd[li] : 0.0;
+    final ls = li < signal.length ? signal[li] : 0.0;
+    final tp = TextPainter(text: TextSpan(children: [
+      TextSpan(text: 'MACD ', style: const TextStyle(color: Color(0xFF5A6270), fontSize: 9)),
+      TextSpan(text: lm.toStringAsFixed(1), style: TextStyle(color: macdC, fontSize: 9)),
+      TextSpan(text: '  Sig ', style: const TextStyle(color: Color(0xFF5A6270), fontSize: 9)),
+      TextSpan(text: ls.toStringAsFixed(1), style: TextStyle(color: sigC, fontSize: 9)),
+    ]), textDirection: TextDirection.ltr)..layout();
+    tp.paint(canvas, Offset(4, panY + 3));
+  }
+
+  void _drawStochastic(Canvas canvas, List<CandleData> all, List<CandleData> vc,
+      int si, double chartW, double panY, double cw, double rp) {
+    final cfg  = indConfigs[IndicatorType.stochastic] ?? _kDefaultConfigs[IndicatorType.stochastic]!;
+    final per  = cfg.params[0].toInt();
+    final smo  = cfg.params.length > 1 ? cfg.params[1].toInt() : 3;
+    final kCol = cfg.colors.isNotEmpty ? cfg.colors[0] : const Color(0xFF64B5F6);
+    final dCol = cfg.colors.length > 1 ? cfg.colors[1] : const Color(0xFFFF9800);
+    if (all.length < per) { return; }
+    final k = List<double>.generate(all.length, (i) {
+      final start = math.max(0, i - per + 1);
+      double lo = all[start].low, hi = all[start].high;
+      for (int j = start + 1; j <= i; j++) {
+        if (all[j].low < lo) { lo = all[j].low; }
+        if (all[j].high > hi) { hi = all[j].high; }
+      }
+      return (hi == lo) ? 50.0 : (all[i].close - lo) / (hi - lo) * 100;
+    });
+    final d = List<double>.generate(all.length,
+        (i) => i < smo - 1 ? k[i] : k.sublist(i - smo + 1, i + 1).reduce((a, b) => a + b) / smo);
+
+    const labelH = 16.0;
+    double syF(double v) => panY + labelH + (_panelH - labelH - 4) * (1 - v / 100);
+    final gp = Paint()..color = const Color(0xFF2A3040)..strokeWidth = 0.5;
+    for (final lv in [20.0, 80.0]) {
+      canvas.drawLine(Offset(0, syF(lv)), Offset(chartW, syF(lv)), gp);
+    }
+    void drl(List<double> vals, Color col, double w) {
+      final path = Path(); bool st = false;
+      for (int i = 0; i < vc.length; i++) {
+        final ai = si + i; if (ai >= vals.length) { break; }
+        final x = (rp + i + 0.5) * cw; final y = syF(vals[ai].clamp(0, 100));
+        if (!st) { path.moveTo(x, y); st = true; } else { path.lineTo(x, y); }
+      }
+      canvas.drawPath(path, Paint()..color = col..strokeWidth = w..style = PaintingStyle.stroke);
+    }
+    drl(k, kCol, 1.2); drl(d, dCol, 1.0);
+    final li = si + vc.length - 1;
+    final lk = li < k.length ? k[li] : 50.0;
+    final ld = li < d.length ? d[li] : 50.0;
+    final tp = TextPainter(text: TextSpan(children: [
+      TextSpan(text: 'Stoch  %K ', style: const TextStyle(color: Color(0xFF5A6270), fontSize: 9)),
+      TextSpan(text: lk.toStringAsFixed(1), style: TextStyle(color: kCol, fontSize: 9)),
+      TextSpan(text: '  %D ', style: const TextStyle(color: Color(0xFF5A6270), fontSize: 9)),
+      TextSpan(text: ld.toStringAsFixed(1), style: TextStyle(color: dCol, fontSize: 9)),
+    ]), textDirection: TextDirection.ltr)..layout();
+    tp.paint(canvas, Offset(4, panY + 3));
+    for (final lv in [20.0, 80.0]) {
+      final lvTp = TextPainter(text: TextSpan(text: lv.toStringAsFixed(0),
+          style: const TextStyle(color: Color(0xFF5A6270), fontSize: 8)),
+          textDirection: TextDirection.ltr)..layout();
+      lvTp.paint(canvas, Offset(chartW + 4, syF(lv) - lvTp.height / 2));
+    }
+  }
+
+  // ── Math helpers ──────────────────────────────────────────────────────────
+
+  static List<double> _ema(List<double> v, int p) {
+    final r = List<double>.filled(v.length, 0);
+    if (v.length < p) { return r; }
+    double s = 0;
+    for (int i = 0; i < p; i++) { s += v[i]; }
+    r[p - 1] = s / p;
+    final k = 2.0 / (p + 1);
+    for (int i = p; i < v.length; i++) { r[i] = v[i] * k + r[i-1] * (1 - k); }
+    return r;
+  }
+
+  static List<double> _calcRsi(List<CandleData> all, int period) {
     final rsi = List<double>.filled(all.length, 50);
+    if (all.length < period + 1) { return rsi; }
     double ag = 0, al = 0;
     for (int i = 1; i <= period; i++) {
       final d = all[i].close - all[i-1].close;
@@ -1066,72 +1940,91 @@ class _Painter extends CustomPainter {
         ag = (ag * (period - 1) + (d > 0 ? d : 0)) / period;
         al = (al * (period - 1) + (d < 0 ? -d : 0)) / period;
       }
-      rsi[i] = 100 - 100 / (1 + (al == 0 ? 0.0 : ag / al));
+      rsi[i] = 100 - 100 / (1 + (al == 0 ? double.infinity : ag / al));
     }
+    return rsi;
+  }
 
-    canvas.drawRect(Rect.fromLTWH(0, panY, size.width, panH), Paint()..color = const Color(0xFF0D1117));
-    canvas.drawLine(Offset(0, panY), Offset(size.width, panY),
-        Paint()..color = const Color(0xFF252A34)..strokeWidth = 0.5);
+  // ── Drawing helpers ───────────────────────────────────────────────────────
 
-    final gp = Paint()..color = const Color(0xFF2A3040)..strokeWidth = 0.5;
-    double ry(double v) => panY + panH * (1 - v / 100) - 4;
-    for (final lv in [30.0, 70.0]) canvas.drawLine(Offset(0, ry(lv)), Offset(chartW, ry(lv)), gp);
-
-    final path = Path(); bool started = false;
-    for (int i = 0; i < vc.length; i++) {
-      final ai = si + i;
-      if (ai >= rsi.length) break;
-      final x = (rp + i + 0.5) * cw;
-      final y = ry(rsi[ai]);
-      if (!started) { path.moveTo(x, y); started = true; } else { path.lineTo(x, y); }
-    }
-    canvas.drawPath(path, Paint()
-      ..color = const Color(0xFF7E57C2)..strokeWidth = 1.2..style = PaintingStyle.stroke);
-
-    final tp = TextPainter(textDirection: TextDirection.ltr);
-    final last = (si + vc.length - 1 < rsi.length) ? rsi[si + vc.length - 1] : 50.0;
-    tp.text = TextSpan(text: 'RSI(14)  ${last.toStringAsFixed(1)}',
-        style: const TextStyle(color: Color(0xFF7E57C2), fontSize: 9));
-    tp.layout(); tp.paint(canvas, Offset(4, panY + 3));
-
-    for (final lv in [30.0, 70.0]) {
-      tp.text = TextSpan(text: lv.toStringAsFixed(0),
-          style: const TextStyle(color: Color(0xFF5A6270), fontSize: 8));
-      tp.layout(); tp.paint(canvas, Offset(chartW + 4, ry(lv) - tp.height / 2));
+  void _drawLines(Canvas canvas, List<CandleData> vc, double chartW,
+      double pH, double Function(double) pyFn, double cw, double rp) {
+    for (int idx = 0; idx < lines.length; idx++) {
+      final ln  = lines[idx];
+      final sel = idx == selIdx;
+      final w   = sel ? ln.width + 1.0 : ln.width;
+      final col = sel ? ln.color : ln.color.withValues(alpha: 0.85);
+      void seg(Offset p1, Offset p2) {
+        final p = Paint()..color = col..strokeWidth = w..style = PaintingStyle.stroke;
+        switch (ln.style) {
+          case LineStyle.solid:  canvas.drawLine(p1, p2, p);
+          case LineStyle.dashed: _dashed(canvas, p1, p2, p, dash: 8, gap: 5);
+          case LineStyle.dotted: _dotted(canvas, p1, p2, col, w);
+        }
+      }
+      if (ln.isHorizontal) {
+        final y = pyFn(ln.startPrice);
+        if (y >= -1 && y <= pH + 1) { seg(Offset(0, y), Offset(chartW, y)); }
+        continue;
+      }
+      double txToX(int t) {
+        if (vc.isEmpty) return 0;
+        final avg = vc.length >= 2
+            ? (vc.last.time - vc.first.time) / (vc.length - 1) : 86400.0;
+        if (t <= vc.first.time) {
+          return (rp + 0.5 - (vc.first.time - t) / avg) * cw;
+        }
+        if (t > vc.last.time) {
+          return (rp + vc.length - 0.5 + (t - vc.last.time) / avg) * cw;
+        }
+        for (int i = 0; i < vc.length; i++) {
+          if (vc[i].time >= t) { return (rp + i + 0.5) * cw; }
+        }
+        return (rp + vc.length - 0.5) * cw;
+      }
+      final x1 = txToX(ln.startTime); final y1 = pyFn(ln.startPrice);
+      final x2 = txToX(ln.endTime);   final y2 = pyFn(ln.endPrice);
+      seg(Offset(x1, y1), Offset(x2, y2));
+      if (sel) {
+        for (final pt in [Offset(x1, y1), Offset(x2, y2)]) {
+          canvas.drawCircle(pt, 5, Paint()..color = ln.color.withValues(alpha: 0.25));
+          canvas.drawCircle(pt, 5,
+              Paint()..color = ln.color..strokeWidth = 1..style = PaintingStyle.stroke);
+        }
+      }
     }
   }
 
-  // ── helpers ───────────────────────────────────────────────────────────
+  void _drawAnchor(Canvas canvas, Offset pos, Color color) {
+    canvas.drawCircle(pos, 7, Paint()..color = color.withValues(alpha: 0.15));
+    canvas.drawCircle(pos, 7,
+        Paint()..color = color..strokeWidth = 1.5..style = PaintingStyle.stroke);
+    canvas.drawCircle(pos, 2.5, Paint()..color = color);
+  }
+
   void _dotted(Canvas canvas, Offset p1, Offset p2, Color color, double w) {
     final d = p2 - p1; final len = d.distance;
-    if (len == 0) return;
-    final unit = d / len; final gap = w * 3;
-    double pos = 0;
-    while (pos < len) {
-      canvas.drawCircle(p1 + unit * pos, w / 2, Paint()..color = color);
-      pos += gap;
-    }
+    if (len == 0) { return; }
+    final u = d / len; final gap = w * 3; double pos = 0;
+    while (pos < len) { canvas.drawCircle(p1 + u * pos, w / 2, Paint()..color = color); pos += gap; }
   }
 
-  void _dashed(Canvas canvas, Offset p1, Offset p2, Paint paint,
-      {double dash = 4, double gap = 4}) {
+  void _dashed(Canvas canvas, Offset p1, Offset p2, Paint paint, {double dash=4, double gap=4}) {
     final d = p2 - p1; final len = d.distance;
-    if (len == 0) return;
-    final unit = d / len; double pos = 0; bool draw = true;
+    if (len == 0) { return; }
+    final u = d / len; double pos = 0; bool draw = true;
     while (pos < len) {
       final seg = math.min(pos + (draw ? dash : gap), len);
-      if (draw) canvas.drawLine(p1 + unit * pos, p1 + unit * seg, paint);
+      if (draw) { canvas.drawLine(p1 + u * pos, p1 + u * seg, paint); }
       pos = seg; draw = !draw;
     }
   }
 
   void _axisLabel(Canvas canvas, double x, double y, String text,
       {required bool center, Color color = Colors.white}) {
-    final tp = TextPainter(
-      text: TextSpan(text: text, style: TextStyle(
-        color: color, fontSize: 10, fontWeight: FontWeight.w500)),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    final tp = TextPainter(text: TextSpan(text: text,
+        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w500)),
+        textDirection: TextDirection.ltr)..layout();
     final lx = center ? x - tp.width / 2 : x;
     final ly = center ? y : y - tp.height / 2;
     canvas.drawRect(Rect.fromLTWH(lx - 2, ly - 1, tp.width + 4, tp.height + 2),
@@ -1141,18 +2034,30 @@ class _Painter extends CustomPainter {
 
   String _fmt(double p) {
     final String n;
-    if (p >= 1e6)       { n = '${(p/1e6).toStringAsFixed(2)}M'; }
-    else if (p >= 1000) { n = p.toStringAsFixed(0).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ','); }
-    else if (p < 1)     { n = p.toStringAsFixed(4); }
-    else                { n = p.toStringAsFixed(2); }
+    if (p >= 1e6) {
+      n = '${(p/1e6).toStringAsFixed(2)}M';
+    } else if (p >= 1000) {
+      n = p.toStringAsFixed(0).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
+    } else if (p < 1) {
+      n = p.toStringAsFixed(4);
+    } else {
+      n = p.toStringAsFixed(2);
+    }
     return '$prefix$n';
+  }
+
+  static String _fmtVol(double v) {
+    if (v >= 1e8) { return '${(v/1e8).toStringAsFixed(1)}억'; }
+    if (v >= 1e4) { return '${(v/1e4).toStringAsFixed(0)}만'; }
+    return v.toStringAsFixed(0);
   }
 
   @override
   bool shouldRepaint(_Painter o) =>
       candles != o.candles || vis != o.vis || scroll != o.scroll ||
       pzoom != o.pzoom || cross != o.cross || prefix != o.prefix ||
-      showRsi != o.showRsi || lines != o.lines || selIdx != o.selIdx ||
+      activeIndicators != o.activeIndicators || indConfigs != o.indConfigs ||
+      lines != o.lines || selIdx != o.selIdx ||
       phase != o.phase || cursor != o.cursor ||
       fpTime != o.fpTime || fpPrice != o.fpPrice;
 }
