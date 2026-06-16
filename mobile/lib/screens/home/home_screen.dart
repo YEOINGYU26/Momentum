@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/app_colors.dart';
 import '../../providers/chart_provider.dart';
 import '../../services/market_data_service.dart';
@@ -18,21 +20,24 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   static const _sectionOrder = ['주식', '암호화폐', '해외주식', '기타'];
 
-  final Map<String, List<_WItem>> _sections = {
+  static const _kPrefKey = 'watchlist_v1';
+
+  static const _kDefaultSections = <String, List<Map<String, String>>>{
     '주식': [
-      _WItem(id: '1', section: '주식', ticker: '005930', name: '삼성전자',   sub: 'Samsung Electronics', price: '-', change: '-', pct: '-', up: true),
-      _WItem(id: '2', section: '주식', ticker: '000660', name: 'SK하이닉스', sub: 'SK Hynix Inc',         price: '-', change: '-', pct: '-', up: true),
-      _WItem(id: '3', section: '주식', ticker: '035420', name: '네이버',     sub: 'NAVER Corp',           price: '-', change: '-', pct: '-', up: true),
-      _WItem(id: '4', section: '주식', ticker: '035720', name: '카카오',     sub: 'Kakao Corp',           price: '-', change: '-', pct: '-', up: true),
-      _WItem(id: '5', section: '주식', ticker: '005380', name: '현대차',     sub: 'Hyundai Motor',        price: '-', change: '-', pct: '-', up: true),
-      _WItem(id: '6', section: '주식', ticker: '051910', name: 'LG화학',     sub: 'LG Chem',              price: '-', change: '-', pct: '-', up: true),
+      {'id': '1', 'section': '주식', 'ticker': '005930', 'name': '삼성전자',   'sub': 'Samsung Electronics'},
+      {'id': '2', 'section': '주식', 'ticker': '000660', 'name': 'SK하이닉스', 'sub': 'SK Hynix Inc'},
+      {'id': '3', 'section': '주식', 'ticker': '035420', 'name': '네이버',     'sub': 'NAVER Corp'},
+      {'id': '4', 'section': '주식', 'ticker': '035720', 'name': '카카오',     'sub': 'Kakao Corp'},
+      {'id': '5', 'section': '주식', 'ticker': '005380', 'name': '현대차',     'sub': 'Hyundai Motor'},
+      {'id': '6', 'section': '주식', 'ticker': '051910', 'name': 'LG화학',     'sub': 'LG Chem'},
     ],
     '암호화폐': [
-      _WItem(id: '7',  section: '암호화폐', ticker: 'BTC', name: 'Bitcoin',  sub: 'Bitcoin / KRW',  price: '-', change: '-', pct: '-', up: true),
-      _WItem(id: '8',  section: '암호화폐', ticker: 'ETH', name: 'Ethereum', sub: 'Ethereum / KRW', price: '-', change: '-', pct: '-', up: true),
+      {'id': '7', 'section': '암호화폐', 'ticker': 'BTC', 'name': 'Bitcoin',  'sub': 'Bitcoin / KRW'},
+      {'id': '8', 'section': '암호화폐', 'ticker': 'ETH', 'name': 'Ethereum', 'sub': 'Ethereum / KRW'},
     ],
   };
 
+  final Map<String, List<_WItem>> _sections = {};
   bool _refreshing = false;
 
   Iterable<_WItem> get _allItems =>
@@ -44,7 +49,45 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _refreshPrices();
+    _loadWatchlist().then((_) => _refreshPrices());
+  }
+
+  Future<void> _loadWatchlist() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kPrefKey);
+    final Map<String, List<_WItem>> loaded = {};
+    if (raw != null) {
+      try {
+        final decoded = jsonDecode(raw) as Map<String, dynamic>;
+        for (final section in _sectionOrder) {
+          final list = decoded[section] as List<dynamic>?;
+          if (list != null) {
+            loaded[section] = list
+                .map((e) => _WItem.fromJson(e as Map<String, dynamic>))
+                .toList();
+          }
+        }
+      } catch (_) {}
+    }
+    // 저장된 데이터가 없으면 기본값 사용
+    if (loaded.isEmpty) {
+      for (final entry in _kDefaultSections.entries) {
+        loaded[entry.key] = entry.value.map(_WItem.fromJson).toList();
+      }
+    }
+    if (mounted) setState(() { _sections.addAll(loaded); });
+  }
+
+  Future<void> _saveWatchlist() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = <String, dynamic>{};
+    for (final section in _sectionOrder) {
+      final list = _sections[section];
+      if (list != null && list.isNotEmpty) {
+        data[section] = list.map((e) => e.toJson()).toList();
+      }
+    }
+    await prefs.setString(_kPrefKey, jsonEncode(data));
   }
 
   Future<void> _refreshPrices() async {
@@ -74,6 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _remove(String section, String id) {
     setState(() => _sections[section]?.removeWhere((e) => e.id == id));
+    _saveWatchlist();
   }
 
   void _reorderSection(String section, int oldIndex, int newIndex) {
@@ -81,6 +125,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final list = _sections[section]!;
       list.insert(newIndex, list.removeAt(oldIndex));
     });
+    _saveWatchlist();
   }
 
   void _openSearch() {
@@ -99,6 +144,7 @@ class _HomeScreenState extends State<HomeScreen> {
               _sections.putIfAbsent(section, () => []);
               _sections[section]!.add(_WItem.fromSymbol(symbol));
             });
+            _saveWatchlist();
             MarketDataService.fetchPrice(symbol.ticker).then((res) {
               if (!mounted || res == null) return;
               setState(() {
@@ -118,6 +164,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 list.removeWhere((e) => e.ticker == ticker);
               }
             });
+            _saveWatchlist();
           },
         ),
       ),
@@ -311,6 +358,19 @@ class _WItem {
         pct: '-',
         up: true,
       );
+
+  factory _WItem.fromJson(Map<String, dynamic> j) => _WItem(
+        id:      j['id']      as String? ?? j['ticker'] as String,
+        section: j['section'] as String? ?? '기타',
+        ticker:  j['ticker']  as String,
+        name:    j['name']    as String? ?? j['ticker'] as String,
+        sub:     j['sub']     as String? ?? '',
+        price: '-', change: '-', pct: '-', up: true,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id, 'section': section, 'ticker': ticker, 'name': name, 'sub': sub,
+      };
 
   _WItem copyWith({String? price, String? change, String? pct, bool? up}) =>
       _WItem(
