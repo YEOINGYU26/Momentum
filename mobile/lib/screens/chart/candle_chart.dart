@@ -1498,8 +1498,11 @@ class _Painter extends CustomPainter {
       );
     }
 
-    // Trend lines
+    // Trend lines — 캔들 영역(pH)으로 클리핑
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(0, 0, chartW, pH));
     _drawLines(canvas, vc, chartW, pH, pyF, cw, rp);
+    canvas.restore();
 
     // Panel indicators
     double panY = usableH + _timeH;

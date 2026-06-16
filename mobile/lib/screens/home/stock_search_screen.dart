@@ -230,12 +230,16 @@ class _SearchResultTile extends StatelessWidget {
     final color = _avatarColors[symbol.ticker.hashCode.abs() % _avatarColors.length];
     final label = symbol.ticker.length > 4 ? symbol.ticker.substring(0, 4) : symbol.ticker;
 
-    return GestureDetector(
-      onTap: onTapRow,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          children: [
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTapRow,
+        splashColor: Colors.white.withValues(alpha: 0.05),
+        highlightColor: Colors.white.withValues(alpha: 0.03),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
             // Avatar
             Container(
               width: 42,
@@ -299,6 +303,7 @@ class _SearchResultTile extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }
