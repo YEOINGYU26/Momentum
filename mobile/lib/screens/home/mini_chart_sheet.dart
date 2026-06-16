@@ -18,10 +18,10 @@ class MiniChartSheet extends StatefulWidget {
     super.key,
     required this.ticker,
     required this.name,
-    required this.price,
-    required this.change,
-    required this.pct,
-    required this.isUp,
+    this.price = '',
+    this.change = '',
+    this.pct = '',
+    this.isUp = false,
     required this.onGoToChart,
   });
 
@@ -127,22 +127,23 @@ class _MiniChartSheetState extends State<MiniChartSheet> {
             ),
           ),
 
-          // Price
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                Text(widget.price,
-                    style: const TextStyle(
-                        color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
-                const SizedBox(width: 10),
-                Text('${widget.change}  ${widget.pct}',
-                    style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w500)),
-              ],
+          // Price (가격 정보가 있을 때만 표시)
+          if (widget.price.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(widget.price,
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 10),
+                  Text('${widget.change}  ${widget.pct}',
+                      style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w500)),
+                ],
+              ),
             ),
-          ),
 
           // Chart area
           SizedBox(

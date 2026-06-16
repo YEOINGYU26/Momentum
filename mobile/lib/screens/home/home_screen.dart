@@ -90,6 +90,7 @@ class _HomeScreenState extends State<HomeScreen> {
         fullscreenDialog: true,
         builder: (_) => StockSearchScreen(
           alreadyAdded: _allItems.map((e) => e.ticker).toList(),
+          onGoToChart: widget.onGoToChart,
           onAdd: (symbol) {
             final section = _sections.containsKey(symbol.category)
                 ? symbol.category

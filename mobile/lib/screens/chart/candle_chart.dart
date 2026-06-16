@@ -204,6 +204,8 @@ class _CandleChartState extends State<CandleChart> {
   final List<ChartLine> _lines = [];
   int?  _selIdx;
   int?  _selEndpoint;        // 0 or 1 when dragging an endpoint
+  ChartLine? _selLineOrig;   // line snapshot at drag start (absolute movement)
+  Offset?    _selDragOrigin; // finger position at drag start
   IndicatorType? _selIndicator; // 보조지표 선택 상태
 
   Offset _selToolbarOffset = const Offset(8, 6);
@@ -321,11 +323,14 @@ class _CandleChartState extends State<CandleChart> {
       if (t <= vc.first.time) {
         return (rp + 0.5 - (vc.first.time - t) / avg) * _cw;
       }
-      if (t > vc.last.time) {
+      if (t >= vc.last.time) {
         return (rp + vc.length - 0.5 + (t - vc.last.time) / avg) * _cw;
       }
-      for (int i = 0; i < vc.length; i++) {
-        if (vc[i].time >= t) { return (rp + i.toDouble() + 0.5) * _cw; }
+      for (int i = 0; i < vc.length - 1; i++) {
+        if (t < vc[i + 1].time) {
+          final frac = (t - vc[i].time) / (vc[i + 1].time - vc[i].time);
+          return (rp + i + frac + 0.5) * _cw;
+        }
       }
       return (rp + vc.length - 0.5) * _cw;
     }
@@ -395,7 +400,8 @@ class _CandleChartState extends State<CandleChart> {
     }
   }
 
-  void _moveSelLine(Offset delta) {
+  // delta = 드래그 시작점 대비 총 이동량 (누적 오차 없음), orig = 드래그 시작 시 선 좌표
+  void _moveSelLine(Offset delta, ChartLine orig) {
     final i = _selIdx;
     if (i == null || i >= _lines.length) { return; }
     final vp = _viewParams();
@@ -403,18 +409,17 @@ class _CandleChartState extends State<CandleChart> {
     final vc = vp.vc;
     if (vc.length < 2) { return; }
     final avg = (vc.last.time - vc.first.time) / (vc.length - 1);
-    final ln  = _lines[i];
     setState(() {
-      _lines[i] = ln.copyWith(
-        startTime:  ln.startTime  + (delta.dx / _cw * avg).round(),
-        endTime:    ln.endTime    + (delta.dx / _cw * avg).round(),
-        startPrice: ln.startPrice - delta.dy / vp.pH * vp.pSpan,
-        endPrice:   ln.endPrice   - delta.dy / vp.pH * vp.pSpan,
+      _lines[i] = orig.copyWith(
+        startTime:  orig.startTime  + (delta.dx / _cw * avg).round(),
+        endTime:    orig.endTime    + (delta.dx / _cw * avg).round(),
+        startPrice: orig.startPrice - delta.dy / vp.pH * vp.pSpan,
+        endPrice:   orig.endPrice   - delta.dy / vp.pH * vp.pSpan,
       );
     });
   }
 
-  void _moveSelEndpoint(int ep, Offset delta) {
+  void _moveSelEndpoint(int ep, Offset delta, ChartLine orig) {
     final i = _selIdx;
     if (i == null || i >= _lines.length) { return; }
     final vp = _viewParams();
@@ -422,17 +427,16 @@ class _CandleChartState extends State<CandleChart> {
     final vc = vp.vc;
     if (vc.length < 2) { return; }
     final avg = (vc.last.time - vc.first.time) / (vc.length - 1);
-    final ln  = _lines[i];
     setState(() {
       if (ep == 0) {
-        _lines[i] = ln.copyWith(
-          startTime:  ln.startTime  + (delta.dx / _cw * avg).round(),
-          startPrice: ln.startPrice - delta.dy / vp.pH * vp.pSpan,
+        _lines[i] = orig.copyWith(
+          startTime:  orig.startTime  + (delta.dx / _cw * avg).round(),
+          startPrice: orig.startPrice - delta.dy / vp.pH * vp.pSpan,
         );
       } else {
-        _lines[i] = ln.copyWith(
-          endTime:  ln.endTime  + (delta.dx / _cw * avg).round(),
-          endPrice: ln.endPrice - delta.dy / vp.pH * vp.pSpan,
+        _lines[i] = orig.copyWith(
+          endTime:  orig.endTime  + (delta.dx / _cw * avg).round(),
+          endPrice: orig.endPrice - delta.dy / vp.pH * vp.pSpan,
         );
       }
     });
@@ -609,7 +613,11 @@ class _CandleChartState extends State<CandleChart> {
                 }
                 _inPriceAxis = d.localFocalPoint.dx > _chartW;
                 if (_selVisible && d.pointerCount == 1) {
-                  setState(() => _selEndpoint = _findEndpointAt(d.localFocalPoint));
+                  final ep = _findEndpointAt(d.localFocalPoint);
+                  _selEndpoint   = ep;
+                  _selDragOrigin = d.localFocalPoint;
+                  _selLineOrig   = _selIdx != null ? _lines[_selIdx!] : null;
+                  setState(() {});
                   return;
                 }
                 if (!_inPriceAxis && _cross != null &&
@@ -632,10 +640,14 @@ class _CandleChartState extends State<CandleChart> {
                 }
                 if (_selVisible && _selIdx != null && d.pointerCount == 1) {
                   final ep = _selEndpoint;
+                  final orig = _selLineOrig;
+                  final origin = _selDragOrigin;
+                  if (orig == null || origin == null) { return; }
+                  final totalDelta = d.localFocalPoint - origin;
                   if (ep != null) {
-                    _moveSelEndpoint(ep, d.focalPointDelta);
+                    _moveSelEndpoint(ep, totalDelta, orig);
                   } else {
-                    _moveSelLine(d.focalPointDelta);
+                    _moveSelLine(totalDelta, orig);
                   }
                   return;
                 }
@@ -666,7 +678,7 @@ class _CandleChartState extends State<CandleChart> {
                 });
                 if (had) { widget.onCrosshair?.call(null); }
               },
-              onScaleEnd: (_) { _selEndpoint = null; _crossDrag = false; },
+              onScaleEnd: (_) { _selEndpoint = null; _selLineOrig = null; _selDragOrigin = null; _crossDrag = false; },
               onTapDown: (d) { _lastTouch = d.localPosition; },
               onTap: () {
                 if (_drawing) { _handleDrawTap(); return; }
@@ -1974,11 +1986,14 @@ class _Painter extends CustomPainter {
         if (t <= vc.first.time) {
           return (rp + 0.5 - (vc.first.time - t) / avg) * cw;
         }
-        if (t > vc.last.time) {
+        if (t >= vc.last.time) {
           return (rp + vc.length - 0.5 + (t - vc.last.time) / avg) * cw;
         }
-        for (int i = 0; i < vc.length; i++) {
-          if (vc[i].time >= t) { return (rp + i + 0.5) * cw; }
+        for (int i = 0; i < vc.length - 1; i++) {
+          if (t < vc[i + 1].time) {
+            final frac = (t - vc[i].time) / (vc[i + 1].time - vc[i].time);
+            return (rp + i + frac + 0.5) * cw;
+          }
         }
         return (rp + vc.length - 0.5) * cw;
       }

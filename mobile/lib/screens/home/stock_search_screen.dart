@@ -1,17 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../core/app_colors.dart';
+import '../../providers/chart_provider.dart';
 import '../../services/market_data_service.dart';
+import 'mini_chart_sheet.dart';
 
 class StockSearchScreen extends StatefulWidget {
   final List<String> alreadyAdded;
   final void Function(SymbolInfo) onAdd;
   final void Function(String) onRemove;
+  final VoidCallback? onGoToChart;
 
   const StockSearchScreen({
     super.key,
     required this.alreadyAdded,
     required this.onAdd,
     required this.onRemove,
+    this.onGoToChart,
   });
 
   @override
@@ -39,6 +44,26 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
     _ctrl.dispose();
     _focus.dispose();
     super.dispose();
+  }
+
+  void _openPreview(SymbolInfo s) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => ChangeNotifierProvider.value(
+        value: context.read<ChartProvider>(),
+        child: MiniChartSheet(
+          ticker: s.ticker,
+          name: s.name,
+          onGoToChart: () {
+            Navigator.of(context).pop(); // 미니차트 닫기
+            Navigator.of(context).pop(); // 검색 화면 닫기
+            widget.onGoToChart?.call();
+          },
+        ),
+      ),
+    );
   }
 
   List<SymbolInfo> get _results => SymbolDatabase.search(_query, _category);
@@ -165,6 +190,7 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
         return _SearchResultTile(
           symbol: s,
           isAdded: added,
+          onTapRow: () => _openPreview(s),
           onToggle: () {
             if (added) {
               _addedTickers.remove(s.ticker);
@@ -185,10 +211,12 @@ class _SearchResultTile extends StatelessWidget {
   final SymbolInfo symbol;
   final bool isAdded;
   final VoidCallback onToggle;
+  final VoidCallback? onTapRow;
   const _SearchResultTile({
     required this.symbol,
     required this.isAdded,
     required this.onToggle,
+    this.onTapRow,
   });
 
   static const _avatarColors = [
@@ -202,8 +230,8 @@ class _SearchResultTile extends StatelessWidget {
     final color = _avatarColors[symbol.ticker.hashCode.abs() % _avatarColors.length];
     final label = symbol.ticker.length > 4 ? symbol.ticker.substring(0, 4) : symbol.ticker;
 
-    return InkWell(
-      onTap: onToggle,
+    return GestureDetector(
+      onTap: onTapRow,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(
