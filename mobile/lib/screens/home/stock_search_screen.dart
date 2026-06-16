@@ -57,8 +57,8 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
           ticker: s.ticker,
           name: s.name,
           onGoToChart: () {
-            Navigator.of(context).pop(); // 미니차트 닫기
-            Navigator.of(context).pop(); // 검색 화면 닫기
+            // MiniChartSheet이 자체적으로 pop한 후 호출되므로 검색화면만 닫으면 됨
+            Navigator.of(context).pop();
             widget.onGoToChart?.call();
           },
         ),
