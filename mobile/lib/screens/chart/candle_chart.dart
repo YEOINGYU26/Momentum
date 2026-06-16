@@ -277,7 +277,8 @@ class _CandleChartState extends State<CandleChart> {
     final r   = _range();
     final vis = _c.sublist(r.s, r.e);
     if (vis.isEmpty) return null;
-    final slot = ((dx / _cw) - r.rp).round().clamp(0, vis.length - 1);
+    // floor: 스냅된 커서 중앙(slot+0.5)이 같은 슬롯으로 변환되도록
+    final slot = ((dx / _cw) - r.rp).floor().clamp(0, vis.length - 1);
     return vis[slot].time;
   }
 
@@ -286,7 +287,8 @@ class _CandleChartState extends State<CandleChart> {
     final r   = _range();
     final vis = _c.sublist(r.s, r.e);
     if (vis.isEmpty) return raw;
-    final slot = ((raw.dx / _cw) - r.rp).round().clamp(0, vis.length - 1);
+    // floor: slot + 0.5(중앙)이 다시 스냅될 때 같은 슬롯으로 돌아오도록 (멱등성 보장)
+    final slot = ((raw.dx / _cw) - r.rp).floor().clamp(0, vis.length - 1);
     return Offset((r.rp + slot + 0.5) * _cw, raw.dy);
   }
 
