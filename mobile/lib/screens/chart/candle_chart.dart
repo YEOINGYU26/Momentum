@@ -547,12 +547,11 @@ class _CandleChartState extends State<CandleChart> {
     if (i == null || i >= _lines.length) return const SizedBox.shrink();
     final ln = _lines[i];
 
-    // 선의 픽셀 중점 계산
     final pts = _linePixels(ln);
     final midX = pts != null ? (pts.$1.dx + pts.$2.dx) / 2 : _chartW / 2;
     final midY = pts != null ? (pts.$1.dy + pts.$2.dy) / 2 : _chartH / 2;
 
-    const toolW = 284.0;
+    const toolW = 210.0;
     const toolH = 40.0;
     const margin = 8.0;
 
@@ -572,44 +571,41 @@ class _CandleChartState extends State<CandleChart> {
             border: Border.all(color: Colors.white12),
             boxShadow: const [BoxShadow(color: Color(0x88000000), blurRadius: 10, offset: Offset(0, 3))],
           ),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
+          child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-              // 색상 스와치
-              ..._colors.map((c) => GestureDetector(
-                onTap: () => _updateSel(color: c),
+            child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
+              // 색상 — 드롭다운 팝업
+              Builder(builder: (ctx) => GestureDetector(
+                onTap: () => _showSelColorMenu(ctx, ln),
                 child: Container(
-                  width: 15, height: 15,
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  width: 22, height: 22,
                   decoration: BoxDecoration(
-                    color: c, shape: BoxShape.circle,
-                    border: ln.color.toARGB32() == c.toARGB32()
-                        ? Border.all(color: Colors.white, width: 2) : null,
+                    color: ln.color, shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white30, width: 1.5),
                   ),
                 ),
               )),
+              const SizedBox(width: 2),
+              const Icon(Icons.arrow_drop_down, size: 14, color: AppColors.gray),
               _div(),
-              // 두께 1-4
-              ...[1.0, 2.0, 3.0, 4.0].map((w) {
-                final sel = (ln.width - w).abs() < 0.1;
-                return GestureDetector(
-                  onTap: () => _updateSel(width: w),
-                  child: Container(
-                    width: 28, height: 28,
-                    margin: const EdgeInsets.symmetric(horizontal: 2),
-                    decoration: BoxDecoration(
-                      color: sel ? AppColors.green.withValues(alpha: 0.2) : Colors.transparent,
-                      borderRadius: BorderRadius.circular(4),
-                      border: sel ? Border.all(color: AppColors.green.withValues(alpha: 0.5)) : null,
-                    ),
-                    child: Center(child: Text('${w.toInt()}px', style: TextStyle(
-                      fontSize: 9, fontWeight: FontWeight.w600,
-                      color: sel ? AppColors.green : AppColors.gray,
-                    ))),
+              // 두께 — 드롭다운 팝업
+              Builder(builder: (ctx) => GestureDetector(
+                onTap: () => _showSelWidthMenu(ctx, ln),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.white24),
                   ),
-                );
-              }),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Text('${ln.width.toInt()}px', style: const TextStyle(
+                      fontSize: 10, color: Colors.white70, fontWeight: FontWeight.w600,
+                    )),
+                    const SizedBox(width: 2),
+                    const Icon(Icons.arrow_drop_down, size: 14, color: AppColors.gray),
+                  ]),
+                ),
+              )),
               _div(),
               // 스타일
               _styleBtn(ln, LineStyle.solid,  '─'),
@@ -619,19 +615,91 @@ class _CandleChartState extends State<CandleChart> {
               // 복제
               GestureDetector(
                 onTap: _cloneSel,
-                child: _actBtn('복제', Icons.copy_outlined, AppColors.gray),
+                child: const Icon(Icons.copy_outlined, size: 16, color: AppColors.gray),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 10),
               // 제거
               GestureDetector(
                 onTap: _deleteSel,
-                child: _actBtn('제거', Icons.delete_outline, AppColors.red),
+                child: const Icon(Icons.delete_outline, size: 16, color: AppColors.red),
               ),
             ]),
           ),
         ),
       ),
     );
+  }
+
+  void _showSelColorMenu(BuildContext ctx, ChartLine ln) async {
+    final box = ctx.findRenderObject() as RenderBox;
+    final pos = box.localToGlobal(Offset.zero);
+    final c = await showMenu<Color>(
+      context: ctx,
+      color: const Color(0xFF1A1F2E),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Colors.white12),
+      ),
+      position: RelativeRect.fromLTRB(pos.dx, pos.dy + box.size.height + 4, pos.dx + 160, 0),
+      items: _colors.map((c) => PopupMenuItem<Color>(
+        value: c,
+        height: 36,
+        child: Row(children: [
+          Container(
+            width: 18, height: 18,
+            decoration: BoxDecoration(
+              color: c, shape: BoxShape.circle,
+              border: ln.color.toARGB32() == c.toARGB32()
+                  ? Border.all(color: Colors.white, width: 2) : null,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(_colorName(c), style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        ]),
+      )).toList(),
+    );
+    if (c != null) _updateSel(color: c);
+  }
+
+  void _showSelWidthMenu(BuildContext ctx, ChartLine ln) async {
+    final box = ctx.findRenderObject() as RenderBox;
+    final pos = box.localToGlobal(Offset.zero);
+    final w = await showMenu<double>(
+      context: ctx,
+      color: const Color(0xFF1A1F2E),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Colors.white12),
+      ),
+      position: RelativeRect.fromLTRB(pos.dx, pos.dy + box.size.height + 4, pos.dx + 80, 0),
+      items: [1.0, 2.0, 3.0, 4.0].map((w) => PopupMenuItem<double>(
+        value: w,
+        height: 36,
+        child: Row(children: [
+          Container(
+            width: 28, height: (ln.width - w).abs() < 0.1 ? w + 1 : w,
+            color: (ln.width - w).abs() < 0.1 ? AppColors.green : Colors.white54,
+          ),
+          const SizedBox(width: 10),
+          Text('${w.toInt()}px', style: TextStyle(
+            color: (ln.width - w).abs() < 0.1 ? AppColors.green : Colors.white70,
+            fontSize: 12, fontWeight: FontWeight.w600,
+          )),
+        ]),
+      )).toList(),
+    );
+    if (w != null) _updateSel(width: w);
+  }
+
+  static String _colorName(Color c) {
+    if (c == Colors.white)           return '흰색';
+    if (c == const Color(0xFFFFD700)) return '노란색';
+    if (c == const Color(0xFF4FC3F7)) return '하늘색';
+    if (c == AppColors.green)         return '초록색';
+    if (c == AppColors.red)           return '빨간색';
+    if (c == const Color(0xFFCE93D8)) return '보라색';
+    if (c == const Color(0xFFFF8A65)) return '주황색';
+    return '';
   }
 
   Widget _div() => Container(
