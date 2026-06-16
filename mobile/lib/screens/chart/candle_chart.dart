@@ -100,7 +100,6 @@ class _CandleChartState extends State<CandleChart> {
   static const double _volR     = 0.18;
   static const double _indH     = 80;
   static const double _toolbarH = 36;
-  static const double _propH    = 44;
 
   // scroll/zoom
   double _vis      = 60;
@@ -139,10 +138,7 @@ class _CandleChartState extends State<CandleChart> {
   bool get _drawing =>
       _phase == DrawPhase.placingFirst || _phase == DrawPhase.placingSecond;
 
-  double get _shownPropH =>
-      (_phase == DrawPhase.selected && _selIdx != null) ? _propH : 0.0;
-
-  double get _chartH => math.max(_sz.height - _toolbarH - _shownPropH, 1);
+  double get _chartH => math.max(_sz.height - _toolbarH, 1);
   double get _chartW => math.max(_sz.width  - _axisW, 1);
   double get _cw     => _chartW / _vis;
 
@@ -198,6 +194,90 @@ class _CandleChartState extends State<CandleChart> {
     return Offset((r.rp + slot + 0.5) * _cw, raw.dy);
   }
 
+  // ── view params helper (shared by hit-test + toolbar positioning) ─────
+  ({List<CandleData> vc, double rp, double pMin, double pSpan, double pH})? _viewParams() {
+    if (_c.isEmpty) return null;
+    final r  = _range();
+    final vc = _c.sublist(r.s, r.e);
+    if (vc.isEmpty) return null;
+    double lo = vc[0].low, hi = vc[0].high;
+    for (final c in vc) {
+      if (c.low < lo) lo = c.low;
+      if (c.high > hi) hi = c.high;
+    }
+    final pad   = (hi - lo) * 0.06;
+    final cent  = (hi + lo) / 2;
+    final half  = (hi - lo) / 2 + pad;
+    final pMin  = cent - half / _pzoom;
+    final pMax  = cent + half / _pzoom;
+    final pSpan = pMax - pMin;
+    if (pSpan <= 0) return null;
+    final usable = _chartH - _timeH - (_showRsi ? _indH : 0.0);
+    final pH = usable * (1 - _volR);
+    return (vc: vc, rp: r.rp, pMin: pMin, pSpan: pSpan, pH: pH);
+  }
+
+  // ── line → pixel coords ───────────────────────────────────────────────
+  (Offset, Offset)? _linePixels(ChartLine ln) {
+    final vp = _viewParams();
+    if (vp == null) return null;
+    final vc = vp.vc; final rp = vp.rp;
+    final pMin = vp.pMin; final pSpan = vp.pSpan; final pH = vp.pH;
+    double py(double p) => pH - (p - pMin) / pSpan * pH;
+    double txToX(int t) {
+      for (int i = 0; i < vc.length; i++) {
+        if (vc[i].time >= t) return (rp + i + 0.5) * _cw;
+      }
+      return _chartW;
+    }
+    if (ln.isHorizontal) {
+      final y = py(ln.startPrice);
+      return (Offset(0, y), Offset(_chartW, y));
+    }
+    final x1 = txToX(ln.startTime);
+    final x2 = txToX(ln.endTime);
+    return (Offset(x1, py(ln.startPrice)), Offset(x2, py(ln.endPrice)));
+  }
+
+  // ── hit test ──────────────────────────────────────────────────────────
+  static double _ptSegDist(Offset p, Offset a, Offset b) {
+    final ab   = b - a;
+    final ap   = p - a;
+    final len2 = ab.distanceSquared;
+    if (len2 == 0) return (p - a).distance;
+    final t = (ap.dx * ab.dx + ap.dy * ab.dy) / len2;
+    final closest = a + ab * t.clamp(0.0, 1.0);
+    return (p - closest).distance;
+  }
+
+  int? _findLineAt(Offset tap) {
+    int? hit; double minD = 12.0;
+    for (int i = 0; i < _lines.length; i++) {
+      final pts = _linePixels(_lines[i]);
+      if (pts == null) continue;
+      final d = _ptSegDist(tap, pts.$1, pts.$2);
+      if (d < minD) { minD = d; hit = i; }
+    }
+    return hit;
+  }
+
+  // ── tap handler on chart area ─────────────────────────────────────────
+  void _handleTapOnChart(Offset tap) {
+    final hit = _findLineAt(tap);
+    if (hit != null) {
+      setState(() {
+        _selIdx = hit; _phase = DrawPhase.selected;
+        _tool = DrawTool.none; _cross = null;
+      });
+      return;
+    }
+    if (_phase == DrawPhase.selected) {
+      setState(() { _phase = DrawPhase.idle; _selIdx = null; _tool = DrawTool.none; });
+      return;
+    }
+    if (_cross != null) _showCross(tap);
+  }
+
   // ── drawing actions ───────────────────────────────────────────────────
   void _activateTool(DrawTool tool) {
     setState(() {
@@ -227,8 +307,8 @@ class _CandleChartState extends State<CandleChart> {
               startPrice: p, endPrice: p,
               color: _dColor, width: _dWidth, style: _dStyle, isHorizontal: true,
             ));
-            _selIdx = _lines.length - 1;
-            _phase = DrawPhase.selected; _cursor = null;
+            _selIdx = null;
+            _phase = DrawPhase.idle; _cursor = null;
           });
         }
       } else {
@@ -248,8 +328,8 @@ class _CandleChartState extends State<CandleChart> {
             startPrice: _fpPrice!, endPrice: p,
             color: _dColor, width: _dWidth, style: _dStyle,
           ));
-          _selIdx = _lines.length - 1;
-          _phase = DrawPhase.selected;
+          _selIdx = null;
+          _phase = DrawPhase.idle; _tool = DrawTool.none;
           _fpTime = null; _fpPrice = null; _cursor = null;
         });
       }
@@ -296,84 +376,83 @@ class _CandleChartState extends State<CandleChart> {
       _sz = c.biggest;
       return Column(children: [
         _buildToolbar(),
-        if (_phase == DrawPhase.selected && _selIdx != null) _buildProps(),
         Expanded(
-          child: GestureDetector(
-            onScaleStart: (d) {
-              _lastTouch = d.localFocalPoint;
-              if (_drawing) {
-                setState(() => _cursor = _snapCursor(d.localFocalPoint));
-                return;
-              }
-              _inPriceAxis = d.localFocalPoint.dx > _chartW;
-              _startVis = _vis; _startPz = _pzoom;
-            },
-            onScaleUpdate: (d) {
-              if (_drawing) {
-                if (d.pointerCount == 1) setState(() => _cursor = _snapCursor(d.localFocalPoint));
-                return;
-              }
-              if (_inPriceAxis) {
+          child: Stack(children: [
+            GestureDetector(
+              onScaleStart: (d) {
+                _lastTouch = d.localFocalPoint;
+                if (_drawing) {
+                  setState(() => _cursor = _snapCursor(d.localFocalPoint));
+                  return;
+                }
+                _inPriceAxis = d.localFocalPoint.dx > _chartW;
+                _startVis = _vis; _startPz = _pzoom;
+              },
+              onScaleUpdate: (d) {
+                if (_drawing) {
+                  if (d.pointerCount == 1) setState(() => _cursor = _snapCursor(d.localFocalPoint));
+                  return;
+                }
+                if (_inPriceAxis) {
+                  setState(() {
+                    _pzoom = (d.pointerCount >= 2
+                        ? _startPz * d.scale
+                        : _pzoom * math.exp(-d.focalPointDelta.dy / 80))
+                        .clamp(0.15, 10.0);
+                  });
+                  return;
+                }
+                if (d.pointerCount >= 2) {
+                  setState(() => _vis = (_startVis / d.scale).clamp(_minVis, _maxVis));
+                  return;
+                }
+                if (_longPress) return;
+                final had = _cross != null;
                 setState(() {
-                  _pzoom = (d.pointerCount >= 2
-                      ? _startPz * d.scale
-                      : _pzoom * math.exp(-d.focalPointDelta.dy / 80))
-                      .clamp(0.15, 10.0);
+                  if (had) _cross = null;
+                  final mx = math.max(0.0, _c.length.toDouble() - _vis);
+                  _scroll = (_scroll + d.focalPointDelta.dx / _cw).clamp(0.0, mx);
                 });
-                return;
-              }
-              if (d.pointerCount >= 2) {
-                setState(() => _vis = (_startVis / d.scale).clamp(_minVis, _maxVis));
-                return;
-              }
-              if (_longPress) return;
-              final had = _cross != null;
-              setState(() {
-                if (had) _cross = null;
-                final mx = math.max(0.0, _c.length.toDouble() - _vis);
-                _scroll = (_scroll + d.focalPointDelta.dx / _cw).clamp(0.0, mx);
-              });
-              if (had) widget.onCrosshair?.call(null);
-            },
-            onScaleEnd: (_) {},
-            onTapDown: (d) { _lastTouch = d.localPosition; },
-            onTap: () {
-              if (_drawing) { _handleDrawTap(); return; }
-              if (_phase == DrawPhase.selected) {
-                setState(() { _phase = DrawPhase.idle; _selIdx = null; _tool = DrawTool.none; });
-                return;
-              }
-              if (_cross != null && _lastTouch != null && !_longPress) {
-                _showCross(_lastTouch!);
-              }
-            },
-            onLongPressStart: (d) {
-              if (_drawing) return;
-              _longPress = true; _lpFinger = d.localPosition;
-              if (_cross == null) _showCross(d.localPosition);
-              _lpCrossStart = _cross;
-            },
-            onLongPressMoveUpdate: (d) {
-              if (_drawing) return;
-              final sf = _lpFinger; final sc = _lpCrossStart;
-              if (sf == null || sc == null) { _showCross(d.localPosition); return; }
-              _showCross(sc + (d.localPosition - sf));
-            },
-            onLongPressEnd: (_) {
-              _longPress = false; _lpFinger = null; _lpCrossStart = null;
-            },
-            child: SizedBox.expand(
-              child: CustomPaint(
-                painter: _Painter(
-                  candles: _c, vis: _vis, scroll: _scroll, pzoom: _pzoom,
-                  cross: _cross, prefix: widget.pricePrefix,
-                  showRsi: _showRsi, lines: _lines, selIdx: _selIdx,
-                  phase: _phase, cursor: _cursor,
-                  fpTime: _fpTime, fpPrice: _fpPrice,
+                if (had) widget.onCrosshair?.call(null);
+              },
+              onScaleEnd: (_) {},
+              onTapDown: (d) { _lastTouch = d.localPosition; },
+              onTap: () {
+                if (_drawing) { _handleDrawTap(); return; }
+                final touch = _lastTouch;
+                if (touch == null || _longPress) return;
+                if (touch.dx < _chartW) _handleTapOnChart(touch);
+              },
+              onLongPressStart: (d) {
+                if (_drawing) return;
+                _longPress = true; _lpFinger = d.localPosition;
+                if (_cross == null) _showCross(d.localPosition);
+                _lpCrossStart = _cross;
+              },
+              onLongPressMoveUpdate: (d) {
+                if (_drawing) return;
+                final sf = _lpFinger; final sc = _lpCrossStart;
+                if (sf == null || sc == null) { _showCross(d.localPosition); return; }
+                _showCross(sc + (d.localPosition - sf));
+              },
+              onLongPressEnd: (_) {
+                _longPress = false; _lpFinger = null; _lpCrossStart = null;
+              },
+              child: SizedBox.expand(
+                child: CustomPaint(
+                  painter: _Painter(
+                    candles: _c, vis: _vis, scroll: _scroll, pzoom: _pzoom,
+                    cross: _cross, prefix: widget.pricePrefix,
+                    showRsi: _showRsi, lines: _lines, selIdx: _selIdx,
+                    phase: _phase, cursor: _cursor,
+                    fpTime: _fpTime, fpPrice: _fpPrice,
+                  ),
                 ),
               ),
             ),
-          ),
+            if (_phase == DrawPhase.selected && _selIdx != null)
+              _buildFloatingToolbar(),
+          ]),
         ),
       ]);
     });
@@ -389,9 +468,9 @@ class _CandleChartState extends State<CandleChart> {
     height: _toolbarH,
     child: Row(children: [
       const SizedBox(width: 8),
-      _toolBtn(DrawTool.trendLine, '✏️', '추세선'),
+      _toolBtn(DrawTool.trendLine, '추세선', pencil: true),
       const SizedBox(width: 4),
-      _toolBtn(DrawTool.hLine,     '➖', '수평선'),
+      _toolBtn(DrawTool.hLine, '수평선', emoji: '➖'),
       const SizedBox(width: 8),
       GestureDetector(
         onTap: _showColorSheet,
@@ -432,8 +511,15 @@ class _CandleChartState extends State<CandleChart> {
     ]),
   );
 
-  Widget _toolBtn(DrawTool tool, String emoji, String label) {
+  Widget _toolBtn(DrawTool tool, String label, {bool pencil = false, String? emoji}) {
     final active = _tool == tool;
+    Widget icon;
+    if (pencil) {
+      icon = Image.asset('assets/icons/pencil_draw.png', width: 13, height: 13,
+          color: active ? AppColors.green : AppColors.gray);
+    } else {
+      icon = Text(emoji ?? '', style: const TextStyle(fontSize: 13));
+    }
     return GestureDetector(
       onTap: () => _activateTool(tool),
       child: Container(
@@ -444,7 +530,7 @@ class _CandleChartState extends State<CandleChart> {
           border: active ? Border.all(color: AppColors.green.withValues(alpha: 0.5)) : null,
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(emoji, style: const TextStyle(fontSize: 13)),
+          icon,
           const SizedBox(width: 3),
           Text(label, style: TextStyle(
             fontSize: 10, fontWeight: FontWeight.w600,
@@ -455,70 +541,95 @@ class _CandleChartState extends State<CandleChart> {
     );
   }
 
-  // ── Properties panel ──────────────────────────────────────────────────
-  Widget _buildProps() {
+  // ── Floating toolbar (선 선택 시 선 위에 오버레이) ─────────────────────
+  Widget _buildFloatingToolbar() {
     final i = _selIdx;
     if (i == null || i >= _lines.length) return const SizedBox.shrink();
     final ln = _lines[i];
-    return Container(
-      height: _propH,
-      color: const Color(0xFF0A0E17),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-          // color swatches
-          ..._colors.map((c) => GestureDetector(
-            onTap: () => _updateSel(color: c),
-            child: Container(
-              width: 16, height: 16,
-              margin: const EdgeInsets.symmetric(horizontal: 3),
-              decoration: BoxDecoration(
-                color: c, shape: BoxShape.circle,
-                border: ln.color.toARGB32() == c.toARGB32()
-                    ? Border.all(color: Colors.white, width: 2) : null,
-              ),
-            ),
-          )),
-          _div(),
-          // width 1-4
-          ...[1.0, 2.0, 3.0, 4.0].map((w) {
-            final sel = (ln.width - w).abs() < 0.1;
-            return GestureDetector(
-              onTap: () => _updateSel(width: w),
-              child: Container(
-                width: 30, height: 28,
-                margin: const EdgeInsets.symmetric(horizontal: 2),
-                decoration: BoxDecoration(
-                  color: sel ? AppColors.green.withValues(alpha: 0.2) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(4),
-                  border: sel ? Border.all(color: AppColors.green.withValues(alpha: 0.5)) : null,
+
+    // 선의 픽셀 중점 계산
+    final pts = _linePixels(ln);
+    final midX = pts != null ? (pts.$1.dx + pts.$2.dx) / 2 : _chartW / 2;
+    final midY = pts != null ? (pts.$1.dy + pts.$2.dy) / 2 : _chartH / 2;
+
+    const toolW = 284.0;
+    const toolH = 40.0;
+    const margin = 8.0;
+
+    final left = (midX - toolW / 2).clamp(margin, math.max(margin, _chartW - toolW - margin)).toDouble();
+    final topAbove = midY - toolH - 12;
+    final top = topAbove >= margin ? topAbove : midY + 12;
+
+    return Positioned(
+      left: left, top: top,
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          height: toolH,
+          decoration: BoxDecoration(
+            color: const Color(0xFF1A1F2E),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white12),
+            boxShadow: const [BoxShadow(color: Color(0x88000000), blurRadius: 10, offset: Offset(0, 3))],
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+              // 색상 스와치
+              ..._colors.map((c) => GestureDetector(
+                onTap: () => _updateSel(color: c),
+                child: Container(
+                  width: 15, height: 15,
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  decoration: BoxDecoration(
+                    color: c, shape: BoxShape.circle,
+                    border: ln.color.toARGB32() == c.toARGB32()
+                        ? Border.all(color: Colors.white, width: 2) : null,
+                  ),
                 ),
-                child: Center(child: Text('${w.toInt()}px', style: TextStyle(
-                  fontSize: 9, fontWeight: FontWeight.w600,
-                  color: sel ? AppColors.green : AppColors.gray,
-                ))),
+              )),
+              _div(),
+              // 두께 1-4
+              ...[1.0, 2.0, 3.0, 4.0].map((w) {
+                final sel = (ln.width - w).abs() < 0.1;
+                return GestureDetector(
+                  onTap: () => _updateSel(width: w),
+                  child: Container(
+                    width: 28, height: 28,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    decoration: BoxDecoration(
+                      color: sel ? AppColors.green.withValues(alpha: 0.2) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(4),
+                      border: sel ? Border.all(color: AppColors.green.withValues(alpha: 0.5)) : null,
+                    ),
+                    child: Center(child: Text('${w.toInt()}px', style: TextStyle(
+                      fontSize: 9, fontWeight: FontWeight.w600,
+                      color: sel ? AppColors.green : AppColors.gray,
+                    ))),
+                  ),
+                );
+              }),
+              _div(),
+              // 스타일
+              _styleBtn(ln, LineStyle.solid,  '─'),
+              _styleBtn(ln, LineStyle.dashed, '--'),
+              _styleBtn(ln, LineStyle.dotted, '···'),
+              _div(),
+              // 복제
+              GestureDetector(
+                onTap: _cloneSel,
+                child: _actBtn('복제', Icons.copy_outlined, AppColors.gray),
               ),
-            );
-          }),
-          _div(),
-          // style
-          _styleBtn(ln, LineStyle.solid,  '─'),
-          _styleBtn(ln, LineStyle.dashed, '--'),
-          _styleBtn(ln, LineStyle.dotted, '···'),
-          _div(),
-          // clone
-          GestureDetector(
-            onTap: _cloneSel,
-            child: _actBtn('복제', Icons.copy_outlined, AppColors.gray),
+              const SizedBox(width: 6),
+              // 제거
+              GestureDetector(
+                onTap: _deleteSel,
+                child: _actBtn('제거', Icons.delete_outline, AppColors.red),
+              ),
+            ]),
           ),
-          const SizedBox(width: 6),
-          // delete
-          GestureDetector(
-            onTap: _deleteSel,
-            child: _actBtn('제거', Icons.delete_outline, AppColors.red),
-          ),
-        ]),
+        ),
       ),
     );
   }
