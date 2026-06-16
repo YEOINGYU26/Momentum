@@ -367,9 +367,8 @@ class _CandleChartState extends State<CandleChart> {
     if (i == null || i >= _lines.length) { return null; }
     final pts = _linePixels(_lines[i]);
     if (pts == null) { return null; }
-    // 24px 히트 반경 — 동그라미(5px) 보다 훨씬 넓어야 손가락으로 정확히 짚을 수 있음
-    if ((tap - pts.$1).distance < 24) { return 0; }
-    if ((tap - pts.$2).distance < 24) { return 1; }
+    if ((tap - pts.$1).distance < 36) { return 0; }
+    if ((tap - pts.$2).distance < 36) { return 1; }
     return null;
   }
 
@@ -903,18 +902,24 @@ class _CandleChartState extends State<CandleChart> {
                     SizedBox(width: 100, child: Text(cLabels[i],
                         style: const TextStyle(color: AppColors.gray, fontSize: 13))),
                     const SizedBox(width: 12),
-                    Wrap(spacing: 8, children: _kColorOptions.map((col) =>
-                        GestureDetector(
+                    Wrap(spacing: 10, children: _kColorOptions.map((col) {
+                        final sel = tempColors[i].toARGB32() == col.toARGB32();
+                        final ck = col.computeLuminance() > 0.5 ? Colors.black87 : Colors.white;
+                        return GestureDetector(
                           onTap: () => setModal(() => tempColors[i] = col),
                           child: Container(
                             width: 24, height: 24,
                             decoration: BoxDecoration(
                               color: col, shape: BoxShape.circle,
-                              border: tempColors[i].toARGB32() == col.toARGB32()
-                                  ? Border.all(color: Colors.white, width: 2) : null,
+                              boxShadow: sel ? [
+                                BoxShadow(color: Colors.black.withValues(alpha: 0.6), blurRadius: 0, spreadRadius: 3),
+                                BoxShadow(color: Colors.white.withValues(alpha: 0.9), blurRadius: 0, spreadRadius: 1.5),
+                              ] : [],
                             ),
+                            child: sel ? Icon(Icons.check, size: 13, color: ck) : null,
                           ),
-                        )).toList()),
+                        );
+                      }).toList()),
                   ]),
                 ),
               // Label color picker
@@ -924,18 +929,24 @@ class _CandleChartState extends State<CandleChart> {
                   const SizedBox(width: 100, child: Text('레이블 색상',
                       style: TextStyle(color: AppColors.gray, fontSize: 13))),
                   const SizedBox(width: 12),
-                  Wrap(spacing: 8, children: _kColorOptions.map((col) =>
-                      GestureDetector(
+                  Wrap(spacing: 10, children: _kColorOptions.map((col) {
+                      final sel = tempLabelColor.toARGB32() == col.toARGB32();
+                      final ck = col.computeLuminance() > 0.5 ? Colors.black87 : Colors.white;
+                      return GestureDetector(
                         onTap: () => setModal(() => tempLabelColor = col),
                         child: Container(
                           width: 24, height: 24,
                           decoration: BoxDecoration(
                             color: col, shape: BoxShape.circle,
-                            border: tempLabelColor.toARGB32() == col.toARGB32()
-                                ? Border.all(color: Colors.white, width: 2) : null,
+                            boxShadow: sel ? [
+                              BoxShadow(color: Colors.black.withValues(alpha: 0.6), blurRadius: 0, spreadRadius: 3),
+                              BoxShadow(color: Colors.white.withValues(alpha: 0.9), blurRadius: 0, spreadRadius: 1.5),
+                            ] : [],
                           ),
+                          child: sel ? Icon(Icons.check, size: 13, color: ck) : null,
                         ),
-                      )).toList()),
+                      );
+                    }).toList()),
                 ]),
               ),
               const SizedBox(height: 8),
@@ -1244,11 +1255,15 @@ class _CandleChartState extends State<CandleChart> {
       position: RelativeRect.fromLTRB(pos.dx, pos.dy + box.size.height + 4, pos.dx + 160, 0),
       items: _kColorOptions.map((col) {
         final sel = ln.color.toARGB32() == col.toARGB32();
+        final ck = col.computeLuminance() > 0.5 ? Colors.black87 : Colors.white;
         return PopupMenuItem<Color>(value: col, height: 36, child: Row(children: [
           Container(width: 18, height: 18, decoration: BoxDecoration(
             color: col, shape: BoxShape.circle,
-            border: sel ? Border.all(color: Colors.white, width: 2) : null,
-          )),
+            boxShadow: sel ? [
+              BoxShadow(color: Colors.black.withValues(alpha: 0.6), blurRadius: 0, spreadRadius: 2.5),
+              BoxShadow(color: Colors.white.withValues(alpha: 0.9), blurRadius: 0, spreadRadius: 1.5),
+            ] : [],
+          ), child: sel ? Icon(Icons.check, size: 11, color: ck) : null),
           const SizedBox(width: 10),
           Text(_colorName(col), style: TextStyle(
               color: sel ? Colors.white : Colors.white70, fontSize: 12)),
