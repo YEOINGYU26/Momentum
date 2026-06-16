@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -16,6 +17,7 @@ class KISAuth:
         self._settings = settings
         self._access_token: str = ""
         self._expires_at: float = 0.0
+        self._lock = asyncio.Lock()   # 동시 발급 방지
 
     @property
     def access_token(self) -> str:
@@ -71,9 +73,14 @@ class KISAuth:
         self.save_to_cache()
 
     async def ensure_token(self) -> str:
+        # 빠른 경로: 이미 유효하면 lock 없이 반환
         if self.is_valid:
             return self._access_token
-        if self.load_from_cache():
+        # lock 획득 후 재확인 (다른 코루틴이 먼저 발급했을 수 있음)
+        async with self._lock:
+            if self.is_valid:
+                return self._access_token
+            if self.load_from_cache():
+                return self._access_token
+            await self.issue_token()
             return self._access_token
-        await self.issue_token()
-        return self._access_token

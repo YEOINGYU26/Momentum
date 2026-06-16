@@ -12,8 +12,11 @@ KIS 실시간 WebSocket 클라이언트
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
+
+_APPROVAL_KEY_TTL = 23 * 3600  # approval_key 캐시 유효기간 (23시간)
 
 import httpx
 import websockets
@@ -87,6 +90,7 @@ class KISWebSocketClient:
         self._settings = settings
         self._on_price = on_price
         self._approval_key: str = ""
+        self._approval_key_at: float = 0.0   # 발급 시각 (time.time())
         self._subscriptions: set[str] = set()
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
         self._task: Optional[asyncio.Task] = None
@@ -127,6 +131,11 @@ class KISWebSocketClient:
     # ------------------------------------------------------------------ #
 
     async def _get_approval_key(self) -> str:
+        # 캐시가 유효하면 재사용 — 불필요한 발급 방지 (KIS 1일 1회 원칙)
+        if self._approval_key and time.time() < self._approval_key_at + _APPROVAL_KEY_TTL:
+            logger.debug("[WS] approval_key 캐시 사용 (%.0fh 남음)",
+                         (self._approval_key_at + _APPROVAL_KEY_TTL - time.time()) / 3600)
+            return self._approval_key
         url = f"{self._settings.kis_base_url}/oauth2/Approval"
         payload = {
             "grant_type": "client_credentials",
@@ -136,7 +145,11 @@ class KISWebSocketClient:
         async with httpx.AsyncClient(verify=False) as client:
             resp = await client.post(url, json=payload, timeout=10)
             resp.raise_for_status()
-        return resp.json()["approval_key"]
+        key = resp.json()["approval_key"]
+        self._approval_key = key
+        self._approval_key_at = time.time()
+        logger.info("[WS] approval_key 신규 발급 완료")
+        return key
 
     def _subscribe_msg(self, ticker: str, tr_type: str) -> str:
         return json.dumps({
@@ -176,8 +189,8 @@ class KISWebSocketClient:
             await self._on_price(update)
 
     async def _connect_and_run(self) -> None:
-        self._approval_key = await self._get_approval_key()
-        logger.info("[WS] approval_key 발급 완료, %s 연결 시도", self._settings.kis_ws_url)
+        await self._get_approval_key()
+        logger.info("[WS] %s 연결 시도", self._settings.kis_ws_url)
 
         async with websockets.connect(
             self._settings.kis_ws_url,

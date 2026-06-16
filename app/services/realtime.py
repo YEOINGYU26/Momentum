@@ -33,12 +33,12 @@ class RealtimeService:
     # ------------------------------------------------------------------ #
 
     def start(self) -> None:
+        # KISWebSocketClient 인스턴스만 생성. connect_loop는 첫 구독자가 생길 때 시작.
         self._kis_ws = KISWebSocketClient(
             settings=self._settings,
             on_price=self._broadcast,
         )
-        self._kis_ws.start()
-        logger.info("[Realtime] 서비스 시작")
+        logger.info("[Realtime] 서비스 준비 완료 (WS는 첫 구독자 연결 시 시작)")
 
     def stop(self) -> None:
         if self._kis_ws:
@@ -53,18 +53,23 @@ class RealtimeService:
         await ws.accept()
         async with self._lock:
             self._clients[ticker].add(ws)
-            # 처음 구독하는 ticker면 KIS WS에 등록
             if len(self._clients[ticker]) == 1 and self._kis_ws:
+                # 첫 구독자 → connect_loop가 꺼져 있으면 켠다
+                if self._kis_ws._task is None or self._kis_ws._task.done():
+                    self._kis_ws.start()
                 await self._kis_ws.subscribe(ticker)
         logger.info("[Realtime] 클라이언트 연결: %s (총 %d)", ticker, len(self._clients[ticker]))
 
     async def disconnect(self, ticker: str, ws: WebSocket) -> None:
         async with self._lock:
             self._clients[ticker].discard(ws)
-            # 구독자가 없으면 KIS WS 구독 해제
             if not self._clients[ticker] and self._kis_ws:
                 await self._kis_ws.unsubscribe(ticker)
                 del self._clients[ticker]
+                # 모든 구독자가 사라지면 connect_loop도 정지
+                if not self._kis_ws.subscribed_tickers():
+                    self._kis_ws.stop()
+                    logger.info("[Realtime] 구독자 없음 — KIS WS 정지")
         logger.info("[Realtime] 클라이언트 해제: %s", ticker)
 
     # ------------------------------------------------------------------ #

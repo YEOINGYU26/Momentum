@@ -30,8 +30,9 @@
 - **IDE**: IntelliJ IDEA (Flutter 플러그인 설치됨)
 - **Python**: 3.9, 가상환경 `.venv/`
 - **Flutter**: 3.44.1 설치됨, Xcode 26.5 설치됨
-- **서버 실행**: `.venv/bin/uvicorn app.main:app --reload --reload-dir app`
+- **서버 실행**: `.venv/bin/uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0`
   - `--reload-dir app` 필수 — 없으면 `mobile/build/` 변경에 반응해 서버가 계속 재시작됨
+  - `--host 0.0.0.0` 필수 — 없으면 localhost only로 열려 Tailscale(아이폰)에서 접근 불가
 
 ## 프로젝트 구조
 
@@ -214,40 +215,52 @@ FCM_CREDENTIALS_PATH=...        # Firebase 서비스 계정 JSON 경로 (선택)
 - 오른쪽 슬라이드 → 과거 데이터, 왼쪽 슬라이드 → 최신 데이터
 - 거래량 바 영역: 캔들이 절대 침범 불가 (`canvas.clipRect` 적용)
 
-## 차트 그리기 도구 (KAN-16, 진행 중)
+## 차트 그리기 도구 (KAN-16, 완료)
 
 ### 상태머신 (DrawPhase)
 - `idle` → 추세선 버튼 클릭 → `placingFirst`
 - `placingFirst` → 탭 → `placingSecond` (1번째 점 확정)
 - `placingSecond` → 탭 → 선 생성, `idle` 복귀
-- `idle` → 선 탭 선택 → `selected` (플로팅 툴바 표시) ← **다음 세션 완성 예정**
+- `idle` → 선 탭 → `selected` (플로팅 툴바 표시)
 
 ### ChartLine 구조
 - `startTime/endTime` (Unix sec), `startPrice/endPrice`: 좌표 기반 → 스크롤/줌 불변
 - `color`, `width` (1-4px), `style` (solid/dashed/dotted)
 - `copyWith()` 패턴으로 불변 업데이트
 
-### 그리기 커서
-- 손가락 이동 시 초록 십자선 + 교차점 원(내부 채움 + 테두리) 표시
-- X축은 캔들에 스냅, Y축은 자유
-- 2번째 점 입력 시: 1번째 앵커 원 + 미리보기 선 함께 표시
+### 드래그 방식 (절대좌표)
+- `onScaleStart` 시 `_selLineOrig` (원본 선), `_selDragOrigin` (시작 터치 위치) 저장
+- `onScaleUpdate` 에서 `totalDelta = focalPoint - origin` 으로 계산 → 누적 오차 없음
+- `txToX` 선형 보간 적용 — 캔들 경계에서 선 길이 변동 없음
+- `_snapCursor` / `_toTime` 모두 `.floor()` 사용 (멱등성 보장)
 
-### 미완성 (다음 세션)
-- 선 히트 테스트: `point-to-segment distance < 10px` → 선 선택
-- 선 선택 시 `Stack + Positioned` 플로팅 툴바 (선 위 오버레이)
-- 플로팅 툴바 내용: 색상 7종, 두께 1/2/3/4px, 스타일, 복제, 제거
-- `GestureDetector(behavior: HitTestBehavior.opaque)` 로 차트 터치 이벤트 차단
+### 복제(Clone) 동작
+- 수평 오프셋 없음, 가격만 `pSpan * 5%` 위로 오프셋 생성
+- 복제 후 `_selLineOrig` 즉시 초기화 (드래그 기준점 정상화)
 
-## 보조지표 (RSI)
-- 차트 하단 80px RSI(14) 패널 — 툴바 `RSI` 버튼 토글
-- Wilder 스무딩 방식, 30/70 수평선 표시
-- `showRsi` 플래그 `_Painter`에 전달
+### 히트 테스트
+- 선 선택: `point-to-segment distance < 10px`
+- 엔드포인트 선택 반경: 36px
+
+## 보조지표 (KAN-16, 완료)
+- MA, EMA, BB, Ichimoku, MACD, Stochastic, RSI(14) 7종
+- 각 지표 설정 시트: 파라미터, 선 색상, **레이블 색상** 개별 지정
+- RSI: 차트 하단 80px 패널, Wilder 스무딩, 30/70 기준선
+- `IndicatorConfig.labelColor` — null이면 `colors[0]` fallback
+
+## 홈 왓치리스트 영구 저장
+- `SharedPreferences` (key: `watchlist_v1`) 에 JSON 저장
+- 저장 항목: `id, section, ticker, name, sub`
+- 앱 재시작 시 `initState` → `_loadWatchlist()` → `_refreshPrices()` 순서
 
 ## assets 구조
 ```
 mobile/assets/
 ├── images/         # 기존 이미지
 ├── icons/
-│   └── pencil_draw.png   # 추세선 버튼 커스텀 아이콘 (Image.asset 미적용, 다음 세션)
+│   └── pencil_draw.png   # 추세선 버튼 커스텀 아이콘
 └── chart.html
 ```
+
+## Jira 문서
+- **KAN-17**: 구현 기능 명세서 — 전체 완성 기능 목록, 버그 수정 이력, 미완료 작업 정리
