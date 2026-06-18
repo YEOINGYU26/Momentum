@@ -6,6 +6,7 @@
   - 공휴일 처리: 기본 제외 목록 미포함 (KIS API가 해당 에러 반환 → 상위에서 처리)
 """
 from datetime import datetime, time
+from typing import Optional
 
 import pytz
 
@@ -19,7 +20,7 @@ def now_kst() -> datetime:
     return datetime.now(KST)
 
 
-def is_market_open(dt: datetime | None = None) -> bool:
+def is_market_open(dt: Optional[datetime] = None) -> bool:
     """주어진 시각(기본: 현재)이 정규 장중인지 반환"""
     now = dt or now_kst()
     if now.weekday() >= 5:          # 토(5) · 일(6)
@@ -28,7 +29,7 @@ def is_market_open(dt: datetime | None = None) -> bool:
     return _OPEN <= t <= _CLOSE
 
 
-def market_status(dt: datetime | None = None) -> str:
+def market_status(dt: Optional[datetime] = None) -> str:
     """
     현재 장 상태 반환:
       open        정규장 (09:00 ~ 15:20)
