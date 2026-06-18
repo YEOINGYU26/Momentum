@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from typing import Optional
 
 from app.core.dependencies import get_orders_api, get_price_monitor
 from app.kis.orders import OrdersAPI
@@ -21,9 +22,14 @@ class MarketOrderRequest(BaseModel):
 
 class AlertRequest(BaseModel):
     ticker: str = Field(..., examples=["005930"])
-    target_price: int = Field(..., gt=0)
+    target_price: int = Field(default=0, ge=0)
     side: str = Field(..., pattern="^(buy|sell)$")
     quantity: int = Field(..., gt=0)
+    # 추세선 알람 (선택)
+    line_start_time: Optional[int] = None
+    line_start_price: Optional[float] = None
+    line_end_time: Optional[int] = None
+    line_end_price: Optional[float] = None
 
 
 @router.post("/buy/limit")
@@ -51,11 +57,18 @@ async def create_alert(
     req: AlertRequest,
     monitor: PriceMonitorService = Depends(get_price_monitor),
 ):
+    is_trendline = req.line_start_time is not None
+    if not is_trendline and req.target_price <= 0:
+        raise HTTPException(status_code=400, detail="고정가 알람은 target_price > 0 이어야 합니다")
     alert = PriceAlert(
         ticker=req.ticker,
         target_price=req.target_price,
         side=req.side,
         quantity=req.quantity,
+        line_start_time=req.line_start_time,
+        line_start_price=req.line_start_price,
+        line_end_time=req.line_end_time,
+        line_end_price=req.line_end_price,
     )
     monitor.add_alert(alert)
     return {"status": "registered", "alert": req.model_dump()}
@@ -70,6 +83,11 @@ async def list_alerts(monitor: PriceMonitorService = Depends(get_price_monitor))
             "side": a.side,
             "quantity": a.quantity,
             "triggered": a.triggered,
+            "is_trendline": a.is_trendline,
+            "line_start_time":  a.line_start_time,
+            "line_start_price": a.line_start_price,
+            "line_end_time":    a.line_end_time,
+            "line_end_price":   a.line_end_price,
         }
         for a in monitor.list_alerts()
     ]

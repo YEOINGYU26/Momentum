@@ -28,16 +28,25 @@ class AlertProvider extends ChangeNotifier {
 
   Future<void> addAlert({
     required String ticker,
-    required int targetPrice,
     required String side,
     required int quantity,
+    int targetPrice = 0,
+    int? lineStartTime,
+    double? lineStartPrice,
+    int? lineEndTime,
+    double? lineEndPrice,
   }) async {
-    await ApiClient.instance.post('/api/v1/orders/alerts', {
+    final body = <String, dynamic>{
       'ticker': ticker,
       'target_price': targetPrice,
       'side': side,
       'quantity': quantity,
-    });
+      if (lineStartTime != null) 'line_start_time': lineStartTime,
+      if (lineStartPrice != null) 'line_start_price': lineStartPrice,
+      if (lineEndTime != null) 'line_end_time': lineEndTime,
+      if (lineEndPrice != null) 'line_end_price': lineEndPrice,
+    };
+    await ApiClient.instance.post('/api/v1/orders/alerts', body);
     await fetchAlerts();
   }
 

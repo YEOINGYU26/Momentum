@@ -14,11 +14,31 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PriceAlert:
     ticker: str
-    target_price: int
-    side: str          # "buy" | "sell"
+    target_price: int       # 고정가 알람용 (추세선 알람은 0 전달)
+    side: str               # "buy" | "sell"
     quantity: int
     active: bool = True
     triggered: bool = False
+    # 추세선 알람 — 모두 None 이면 고정가 알람
+    line_start_time: Optional[int] = None
+    line_start_price: Optional[float] = None
+    line_end_time: Optional[int] = None
+    line_end_price: Optional[float] = None
+
+    @property
+    def is_trendline(self) -> bool:
+        return self.line_start_time is not None
+
+    def effective_target(self, now_ts: int) -> int:
+        """현재 시각의 유효 목표가 반환 (추세선이면 선형 보간/외삽)"""
+        if not self.is_trendline:
+            return self.target_price
+        t0, p0 = self.line_start_time, self.line_start_price
+        t1, p1 = self.line_end_time,   self.line_end_price
+        if t1 == t0:
+            return int(p0)
+        frac = (now_ts - t0) / (t1 - t0)
+        return int(p0 + frac * (p1 - p0))
 
 
 @dataclass
@@ -71,24 +91,30 @@ class PriceMonitorService:
             except Exception as e:
                 logger.warning("시세 조회 실패 %s: %s", ticker, e)
 
+        import time as _time
+        now_ts = int(_time.time())
+
         for alert in active:
             price = prices.get(alert.ticker)
             if price is None:
                 continue
-            triggered = (
-                (alert.side == "buy" and price <= alert.target_price)
-                or (alert.side == "sell" and price >= alert.target_price)
+            target = alert.effective_target(now_ts)
+            hit = (
+                (alert.side == "buy"  and price <= target)
+                or (alert.side == "sell" and price >= target)
             )
-            if not triggered:
+            if not hit:
                 continue
 
             alert.triggered = True
-            logger.info("지정가 도달 — %s %s %d주 @ %d", alert.side, alert.ticker, alert.quantity, price)
+            kind = "추세선" if alert.is_trendline else "지정가"
+            logger.info("%s 도달 — %s %s %d주 @ %d (목표 %d)",
+                        kind, alert.side, alert.ticker, alert.quantity, price, target)
             try:
                 if alert.side == "buy":
-                    result = await self._orders.buy_limit(alert.ticker, alert.quantity, alert.target_price)
+                    result = await self._orders.buy_limit(alert.ticker, alert.quantity, target)
                 else:
-                    result = await self._orders.sell_limit(alert.ticker, alert.quantity, alert.target_price)
+                    result = await self._orders.sell_limit(alert.ticker, alert.quantity, target)
                 await self._notifier.notify_order(alert.side, alert.ticker, price, alert.quantity)
                 logger.info("주문 완료: %s", result)
             except Exception as e:

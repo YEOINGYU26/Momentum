@@ -429,6 +429,7 @@ class _ConditionalTabState extends State<_ConditionalTab> {
   final _priceCtrl = TextEditingController();
   int _quantity = 10;
   bool _submitting = false;
+  ChartLineInfo? _selectedLine; // 추세선 알람용
 
   @override
   void dispose() {
@@ -474,30 +475,49 @@ class _ConditionalTabState extends State<_ConditionalTab> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => _TrendlinePickSheet(
         lines: lines,
-        onPick: (price) {
+        onPick: (line) {
           Navigator.pop(context);
-          setState(() => _priceCtrl.text = price.toStringAsFixed(0));
+          setState(() {
+            _selectedLine = line;
+            _priceCtrl.clear(); // 추세선 선택 시 수동 가격 초기화
+          });
         },
       ),
     );
   }
 
+  void _clearTrendline() => setState(() => _selectedLine = null);
+
   Future<void> _submit() async {
     final s = _selected;
     if (s == null) { _snack('종목을 선택하세요'); return; }
-    final price = int.tryParse(_priceCtrl.text.replaceAll(',', ''));
-    if (price == null || price <= 0) { _snack('목표 가격을 입력하세요'); return; }
+
+    final line = _selectedLine;
+    final int targetPrice;
+    if (line != null) {
+      targetPrice = 0; // 추세선 알람: 고정가 불필요
+    } else {
+      final parsed = int.tryParse(_priceCtrl.text.replaceAll(',', ''));
+      if (parsed == null || parsed <= 0) { _snack('목표 가격을 입력하세요'); return; }
+      targetPrice = parsed;
+    }
+
     setState(() => _submitting = true);
     try {
       await context.read<AlertProvider>().addAlert(
         ticker: s.ticker,
-        targetPrice: price,
         side: _side,
         quantity: _quantity,
+        targetPrice: targetPrice,
+        lineStartTime:  line?.startTime,
+        lineStartPrice: line?.startPrice,
+        lineEndTime:    line?.endTime,
+        lineEndPrice:   line?.endPrice,
       );
       if (mounted) {
         _snack('조건이 등록됐습니다', success: true);
         _priceCtrl.clear();
+        setState(() => _selectedLine = null);
       }
     } catch (e) {
       if (mounted) _snack(e.toString());
@@ -579,44 +599,95 @@ class _ConditionalTabState extends State<_ConditionalTab> {
   }
 
   Widget _buildPriceInput(BuildContext ctx, List<ChartLineInfo> chartLines) {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final line = _selectedLine;
+    final linePrice = line?.priceAt(now);
+
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          height: 52,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: AppColors.gray.withValues(alpha: 0.2),
+        // 추세선 적용 칩 (선택됐을 때)
+        if (line != null) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF6C63FF).withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: const Color(0xFF6C63FF).withValues(alpha: 0.5)),
             ),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _priceCtrl,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold),
-                  decoration: const InputDecoration(
-                    border: InputBorder.none,
-                    hintText: '0',
-                    hintStyle:
-                        TextStyle(color: AppColors.gray, fontSize: 18),
-                    isDense: true,
+            child: Row(
+              children: [
+                const Icon(Icons.timeline,
+                    color: Color(0xFF6C63FF), size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('추세선 적용됨',
+                          style: TextStyle(
+                              color: Color(0xFF6C63FF),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${line.label}  ·  현재 ${_fmtNum(linePrice!)}원',
+                        style: const TextStyle(
+                            color: AppColors.gray, fontSize: 11),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-              const Text('원',
-                  style: TextStyle(color: AppColors.gray, fontSize: 14)),
-            ],
+                GestureDetector(
+                  onTap: _clearTrendline,
+                  child: const Icon(Icons.close,
+                      color: AppColors.gray, size: 18),
+                ),
+              ],
+            ),
           ),
-        ),
+        ] else ...[
+          // 수동 가격 입력
+          Container(
+            height: 52,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppColors.gray.withValues(alpha: 0.2),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _priceCtrl,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold),
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      hintText: '0',
+                      hintStyle:
+                          TextStyle(color: AppColors.gray, fontSize: 18),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const Text('원',
+                    style: TextStyle(color: AppColors.gray, fontSize: 14)),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 8),
+        // 추세선 불러오기 버튼
         GestureDetector(
           onTap: () => _pickTrendline(ctx),
           child: Container(
@@ -933,7 +1004,7 @@ class _TickerSearchSheetState extends State<_TickerSearchSheet> {
 
 class _TrendlinePickSheet extends StatelessWidget {
   final List<ChartLineInfo> lines;
-  final void Function(double price) onPick;
+  final void Function(ChartLineInfo line) onPick;
 
   const _TrendlinePickSheet({required this.lines, required this.onPick});
 
@@ -960,6 +1031,14 @@ class _TrendlinePickSheet extends StatelessWidget {
                   fontSize: 16,
                   fontWeight: FontWeight.bold)),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+          child: Text(
+            '선택한 추세선의 가격이 기울기대로 움직이며, 현재가가 해당 가격에 닿으면 주문이 실행됩니다.',
+            style: TextStyle(
+                color: AppColors.gray.withValues(alpha: 0.8), fontSize: 11),
+          ),
+        ),
         ListView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -968,17 +1047,36 @@ class _TrendlinePickSheet extends StatelessWidget {
             final ln = lines[i];
             final price = ln.priceAt(now);
             return ListTile(
-              onTap: () => onPick(price),
-              leading: const Icon(Icons.timeline,
-                  color: Color(0xFF6C63FF), size: 22),
+              onTap: () => onPick(ln),
+              leading: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF6C63FF).withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.timeline,
+                    color: Color(0xFF6C63FF), size: 18),
+              ),
               title: Text(ln.label,
                   style: const TextStyle(color: Colors.white, fontSize: 13)),
-              trailing: Text(
-                '${_fmtNum(price)}원',
-                style: const TextStyle(
-                    color: AppColors.green,
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold),
+              subtitle: Text(
+                ln.isHorizontal ? '수평 고정가' : '기울기 있는 추세선 (시간에 따라 가격 변동)',
+                style: const TextStyle(color: AppColors.gray, fontSize: 10),
+              ),
+              trailing: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('${_fmtNum(price)}원',
+                      style: const TextStyle(
+                          color: AppColors.green,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold)),
+                  const Text('현재 가격',
+                      style: TextStyle(
+                          color: AppColors.gray, fontSize: 9)),
+                ],
               ),
             );
           },
@@ -1187,8 +1285,7 @@ class _AlertCardState extends State<_AlertCard> {
           .timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         final o = jsonDecode(res.body) as Map<String, dynamic>;
-        final price =
-            (o['current_price'] as num?)?.toDouble() ?? 0;
+        final price = (o['current_price'] as num?)?.toDouble() ?? 0;
         if (mounted) setState(() => _livePrice = _fmtNum(price));
       }
     } catch (_) {}
@@ -1199,6 +1296,8 @@ class _AlertCardState extends State<_AlertCard> {
     final a = widget.alert;
     final color = a.isBuy ? AppColors.green : AppColors.red;
     final sideLabel = a.isBuy ? '매수' : '매도';
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final effectiveTarget = a.effectiveTargetAt(now);
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -1207,72 +1306,96 @@ class _AlertCardState extends State<_AlertCard> {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(sideLabel,
-                style: TextStyle(
-                    color: color,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(a.ticker,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600)),
-                const SizedBox(height: 2),
-                Row(
-                  children: [
-                    Text('목표 ${_fmtNum(a.targetPrice.toDouble())}원',
-                        style: const TextStyle(
-                            color: AppColors.gray, fontSize: 11)),
-                    if (_livePrice != null) ...[
-                      const Text('  ·  ',
-                          style: TextStyle(
-                              color: AppColors.gray, fontSize: 11)),
-                      Text('현재 $_livePrice원',
-                          style: const TextStyle(
-                              color: AppColors.gray, fontSize: 11)),
-                    ],
-                  ],
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                Text('${a.quantity}주',
+                child: Text(sideLabel,
+                    style: TextStyle(
+                        color: color,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold)),
+              ),
+              if (a.isTrendline) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6C63FF).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.timeline,
+                          color: Color(0xFF6C63FF), size: 11),
+                      SizedBox(width: 3),
+                      Text('추세선',
+                          style: TextStyle(
+                              color: Color(0xFF6C63FF),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+              ],
+              const Spacer(),
+              if (a.triggered)
+                const Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.check_circle,
+                      color: AppColors.green, size: 16),
+                ),
+              GestureDetector(
+                onTap: () => _confirmDelete(context),
+                child: Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: AppColors.red.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.close,
+                      color: AppColors.red, size: 16),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(a.ticker,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              Text(
+                a.isTrendline
+                    ? '추세선 목표 ${_fmtNum(effectiveTarget)}원'
+                    : '목표 ${_fmtNum(effectiveTarget)}원',
+                style: const TextStyle(color: AppColors.gray, fontSize: 11),
+              ),
+              if (_livePrice != null) ...[
+                const Text('  ·  ',
+                    style: TextStyle(color: AppColors.gray, fontSize: 11)),
+                Text('현재 $_livePrice원',
                     style: const TextStyle(
                         color: AppColors.gray, fontSize: 11)),
               ],
-            ),
+            ],
           ),
-          if (a.triggered)
-            const Padding(
-              padding: EdgeInsets.only(right: 8),
-              child: Icon(Icons.check_circle,
-                  color: AppColors.green, size: 16),
-            ),
-          GestureDetector(
-            onTap: () => _confirmDelete(context),
-            child: Container(
-              width: 30,
-              height: 30,
-              decoration: BoxDecoration(
-                color: AppColors.red.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.close,
-                  color: AppColors.red, size: 16),
-            ),
-          ),
+          Text('${a.quantity}주',
+              style: const TextStyle(color: AppColors.gray, fontSize: 11)),
         ],
       ),
     );
