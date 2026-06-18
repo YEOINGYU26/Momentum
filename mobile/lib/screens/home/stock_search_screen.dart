@@ -30,6 +30,9 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
   String _category = '전체';
   late final Set<String> _addedTickers;
 
+  List<SymbolInfo> _results = [];
+  bool _loading = false;
+
   static const _categories = ['전체', '주식', '암호화폐', '해외주식'];
 
   @override
@@ -37,6 +40,7 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
     super.initState();
     _addedTickers = Set.from(widget.alreadyAdded);
     _focus.requestFocus();
+    _fetchResults();
   }
 
   @override
@@ -44,6 +48,12 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
     _ctrl.dispose();
     _focus.dispose();
     super.dispose();
+  }
+
+  Future<void> _fetchResults() async {
+    setState(() => _loading = true);
+    final results = await SymbolDatabase.searchAsync(_query, _category);
+    if (mounted) setState(() { _results = results; _loading = false; });
   }
 
   void _openPreview(SymbolInfo s) {
@@ -57,7 +67,6 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
           ticker: s.ticker,
           name: s.name,
           onGoToChart: () {
-            // MiniChartSheet이 자체적으로 pop한 후 호출되므로 검색화면만 닫으면 됨
             Navigator.of(context).pop();
             widget.onGoToChart?.call();
           },
@@ -65,8 +74,6 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
       ),
     );
   }
-
-  List<SymbolInfo> get _results => SymbolDatabase.search(_query, _category);
 
   bool _isAdded(String ticker) => _addedTickers.contains(ticker);
 
@@ -114,7 +121,7 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
                         border: InputBorder.none,
                         isDense: true,
                       ),
-                      onChanged: (v) => setState(() => _query = v),
+                      onChanged: (v) { setState(() => _query = v); _fetchResults(); },
                     ),
                   ),
                   if (_query.isNotEmpty)
@@ -122,6 +129,7 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
                       onTap: () {
                         _ctrl.clear();
                         setState(() => _query = '');
+                        _fetchResults();
                       },
                       child: const Icon(Icons.close, color: AppColors.gray, size: 16),
                     ),
@@ -147,12 +155,12 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         itemCount: _categories.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (_, i) {
           final cat = _categories[i];
           final selected = _category == cat;
           return GestureDetector(
-            onTap: () => setState(() => _category = cat),
+            onTap: () { setState(() => _category = cat); _fetchResults(); },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               decoration: BoxDecoration(
@@ -173,6 +181,9 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
   }
 
   Widget _buildResults() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator(color: AppColors.green, strokeWidth: 2));
+    }
     final results = _results;
     if (results.isEmpty) {
       return const Center(
@@ -182,7 +193,7 @@ class _StockSearchScreenState extends State<StockSearchScreen> {
     return ListView.separated(
       padding: const EdgeInsets.only(top: 8),
       itemCount: results.length,
-      separatorBuilder: (_, __) => const Divider(
+      separatorBuilder: (_, _) => const Divider(
           height: 1, color: Color(0xFF252A34), indent: 72, endIndent: 16),
       itemBuilder: (_, i) {
         final s = results[i];

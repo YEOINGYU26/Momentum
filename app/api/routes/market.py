@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.core.dependencies import get_market_api
+from app.data.symbols import search_symbols
 from app.kis.market import MarketAPI
 
 router = APIRouter(prefix="/market", tags=["market"])
@@ -23,6 +24,21 @@ _MINUTE_MAP = {
     "15m": (15, 40),
     "1h":  (60, 50),
 }
+
+
+@router.get("/search")
+async def search(q: str = "", category: str = "전체"):
+    results = search_symbols(q, category)
+    return [
+        {
+            "ticker":   s.ticker,
+            "name":     s.name,
+            "sub":      s.sub,
+            "exchange": s.exchange,
+            "category": s.category,
+        }
+        for s in results
+    ]
 
 
 @router.get("/price/{ticker}")

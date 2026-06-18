@@ -171,92 +171,59 @@ class PriceResult {
   });
 }
 
-// ── Static symbol database for search ─────────────────────────────────────────
+// ── Symbol search — API 우선, 오프라인 폴백 ────────────────────────────────────
 
 class SymbolDatabase {
-  static const all = [
-    // ── 코스피 대형주 ─────────────────────────────────────────────
-    SymbolInfo(ticker: '005930', name: '삼성전자',         sub: 'Samsung Electronics',    exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '000660', name: 'SK하이닉스',       sub: 'SK Hynix Inc',           exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '005380', name: '현대차',           sub: 'Hyundai Motor',          exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '000270', name: '기아',             sub: 'Kia Corp',               exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '006400', name: '삼성SDI',          sub: 'Samsung SDI',            exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '051910', name: 'LG화학',           sub: 'LG Chem',                exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '066570', name: 'LG전자',           sub: 'LG Electronics',         exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '003550', name: 'LG',               sub: 'LG Corp',                exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '207940', name: '삼성바이오로직스', sub: 'Samsung Biologics',      exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '068270', name: '셀트리온',         sub: 'Celltrion',              exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '005490', name: 'POSCO홀딩스',      sub: 'POSCO Holdings',         exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '096770', name: 'SK이노베이션',     sub: 'SK Innovation',          exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '034730', name: 'SK',               sub: 'SK Holdings',            exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '017670', name: 'SK텔레콤',         sub: 'SK Telecom',             exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '030200', name: 'KT',               sub: 'KT Corp',                exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '015760', name: '한국전력',         sub: 'Korea Electric Power',   exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '028260', name: '삼성물산',         sub: 'Samsung C&T',            exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '012330', name: '현대모비스',       sub: 'Hyundai Mobis',          exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '105560', name: 'KB금융',           sub: 'KB Financial Group',     exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '055550', name: '신한지주',         sub: 'Shinhan Financial',      exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '086790', name: '하나금융지주',     sub: 'Hana Financial Group',   exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '316140', name: '우리금융지주',     sub: 'Woori Financial Group',  exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '032830', name: '삼성생명',         sub: 'Samsung Life Insurance', exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '003490', name: '대한항공',         sub: 'Korean Air',             exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '010950', name: 'S-Oil',            sub: 'S-Oil Corp',             exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '011200', name: 'HMM',              sub: 'HMM Co Ltd',             exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '004020', name: '현대제철',         sub: 'Hyundai Steel',          exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '010130', name: '고려아연',         sub: 'Korea Zinc',             exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '009150', name: '삼성전기',         sub: 'Samsung Electro-Mech',   exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '018880', name: '한온시스템',       sub: 'Hanon Systems',          exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '011790', name: 'SK케미칼',         sub: 'SK Chemicals',           exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '373220', name: 'LG에너지솔루션',   sub: 'LG Energy Solution',     exchange: 'KRX', category: '주식'),
-    // ── 두산 그룹 ─────────────────────────────────────────────────
-    SymbolInfo(ticker: '034020', name: '두산에너빌리티',   sub: 'Doosan Enerbility',      exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '241560', name: '두산밥캣',         sub: 'Doosan Bobcat',          exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '336260', name: '두산퓨얼셀',       sub: 'Doosan Fuel Cell',       exchange: 'KRX', category: '주식'),
-    SymbolInfo(ticker: '000150', name: '두산',             sub: 'Doosan Corp',            exchange: 'KRX', category: '주식'),
-    // ── 2차전지 / 반도체 ──────────────────────────────────────────
-    SymbolInfo(ticker: '247540', name: '에코프로비엠',     sub: 'EcoPro BM',              exchange: 'KOSDAQ', category: '주식'),
-    SymbolInfo(ticker: '086520', name: '에코프로',         sub: 'EcoPro',                 exchange: 'KOSDAQ', category: '주식'),
-    SymbolInfo(ticker: '112610', name: '씨에스윈드',       sub: 'CS Wind',                exchange: 'KRX',    category: '주식'),
-    SymbolInfo(ticker: '000990', name: 'DB하이텍',         sub: 'DB HiTek',               exchange: 'KRX',    category: '주식'),
-    // ── 코스닥 대형주 ─────────────────────────────────────────────
-    SymbolInfo(ticker: '035420', name: '네이버',            sub: 'NAVER Corp',             exchange: 'KRX',    category: '주식'),
-    SymbolInfo(ticker: '035720', name: '카카오',           sub: 'Kakao Corp',             exchange: 'KRX',    category: '주식'),
-    SymbolInfo(ticker: '323410', name: '카카오뱅크',       sub: 'Kakao Bank',             exchange: 'KRX',    category: '주식'),
-    SymbolInfo(ticker: '259960', name: '크래프톤',         sub: 'Krafton',                exchange: 'KRX',    category: '주식'),
-    SymbolInfo(ticker: '251270', name: '넷마블',           sub: 'Netmarble',              exchange: 'KRX',    category: '주식'),
-    SymbolInfo(ticker: '263750', name: '펄어비스',         sub: 'Pearl Abyss',            exchange: 'KOSDAQ', category: '주식'),
-    SymbolInfo(ticker: '293490', name: '카카오게임즈',     sub: 'Kakao Games',            exchange: 'KOSDAQ', category: '주식'),
-    SymbolInfo(ticker: '196170', name: '알테오젠',         sub: 'Alteogen',               exchange: 'KOSDAQ', category: '주식'),
-    SymbolInfo(ticker: '091990', name: '셀트리온헬스케어', sub: 'Celltrion Healthcare',   exchange: 'KOSDAQ', category: '주식'),
-    SymbolInfo(ticker: '357780', name: '솔브레인',         sub: 'Soulbrain',              exchange: 'KOSDAQ', category: '주식'),
-    // ── 글로벌 주식 (참고용, 차트 데모) ──────────────────────────
-    SymbolInfo(ticker: 'AAPL',  name: 'Apple',             sub: 'Apple Inc.',             exchange: 'NASDAQ', category: '해외주식'),
-    SymbolInfo(ticker: 'MSFT',  name: 'Microsoft',         sub: 'Microsoft Corp',         exchange: 'NASDAQ', category: '해외주식'),
-    SymbolInfo(ticker: 'NVDA',  name: 'NVIDIA',            sub: 'NVIDIA Corp',            exchange: 'NASDAQ', category: '해외주식'),
-    SymbolInfo(ticker: 'TSLA',  name: 'Tesla',             sub: 'Tesla Inc.',             exchange: 'NASDAQ', category: '해외주식'),
-    SymbolInfo(ticker: 'AMZN',  name: 'Amazon',            sub: 'Amazon.com Inc.',        exchange: 'NASDAQ', category: '해외주식'),
-    SymbolInfo(ticker: 'GOOGL', name: 'Alphabet',          sub: 'Alphabet Inc.',          exchange: 'NASDAQ', category: '해외주식'),
-    SymbolInfo(ticker: 'META',  name: 'Meta',              sub: 'Meta Platforms Inc.',    exchange: 'NASDAQ', category: '해외주식'),
-    // ── 암호화폐 (Upbit 실데이터) ─────────────────────────────────
-    SymbolInfo(ticker: 'BTC',  name: 'Bitcoin',            sub: 'Bitcoin / KRW',          exchange: 'Upbit', category: '암호화폐'),
-    SymbolInfo(ticker: 'ETH',  name: 'Ethereum',           sub: 'Ethereum / KRW',         exchange: 'Upbit', category: '암호화폐'),
-    SymbolInfo(ticker: 'XRP',  name: 'Ripple',             sub: 'Ripple / KRW',           exchange: 'Upbit', category: '암호화폐'),
-    SymbolInfo(ticker: 'SOL',  name: 'Solana',             sub: 'Solana / KRW',           exchange: 'Upbit', category: '암호화폐'),
-    SymbolInfo(ticker: 'BNB',  name: 'BNB',                sub: 'BNB / KRW',              exchange: 'Upbit', category: '암호화폐'),
-    SymbolInfo(ticker: 'DOGE', name: 'Dogecoin',           sub: 'Dogecoin / KRW',         exchange: 'Upbit', category: '암호화폐'),
-    SymbolInfo(ticker: 'ADA',  name: 'Cardano',            sub: 'Cardano / KRW',          exchange: 'Upbit', category: '암호화폐'),
+  // 오프라인 폴백용 최소 목록
+  static const _fallback = [
+    SymbolInfo(ticker: '005930', name: '삼성전자',   sub: 'Samsung Electronics', exchange: 'KRX',    category: '주식'),
+    SymbolInfo(ticker: '000660', name: 'SK하이닉스', sub: 'SK Hynix Inc',        exchange: 'KRX',    category: '주식'),
+    SymbolInfo(ticker: '035420', name: '네이버',      sub: 'NAVER Corp',          exchange: 'KRX',    category: '주식'),
+    SymbolInfo(ticker: 'AAPL',   name: 'Apple',       sub: 'Apple Inc.',          exchange: 'NASDAQ', category: '해외주식'),
+    SymbolInfo(ticker: 'NVDA',   name: 'NVIDIA',      sub: 'NVIDIA Corp',         exchange: 'NASDAQ', category: '해외주식'),
+    SymbolInfo(ticker: 'BTC',    name: 'Bitcoin',     sub: 'Bitcoin / KRW',       exchange: 'Upbit',  category: '암호화폐'),
+    SymbolInfo(ticker: 'ETH',    name: 'Ethereum',    sub: 'Ethereum / KRW',      exchange: 'Upbit',  category: '암호화폐'),
   ];
 
-  static List<SymbolInfo> search(String query, String category) {
+  static Future<List<SymbolInfo>> searchAsync(String query, String category) async {
+    try {
+      final uri = Uri.parse('$kBaseUrl/api/v1/market/search')
+          .replace(queryParameters: {'q': query, 'category': category});
+      final res = await http.get(uri).timeout(const Duration(seconds: 5));
+      if (res.statusCode != 200) return _localFilter(query, category);
+      final List raw = jsonDecode(res.body) as List;
+      return raw
+          .map((d) => SymbolInfo(
+                ticker:   d['ticker'] as String,
+                name:     d['name'] as String,
+                sub:      d['sub'] as String,
+                exchange: d['exchange'] as String,
+                category: d['category'] as String,
+              ))
+          .toList();
+    } catch (_) {
+      return _localFilter(query, category);
+    }
+  }
+
+  static List<SymbolInfo> _localFilter(String query, String category) {
     final q = query.toLowerCase();
-    return all.where((s) {
+    return _fallback.where((s) {
       final matchCat = category == '전체' || s.category == category;
       final matchQ = q.isEmpty ||
           s.ticker.toLowerCase().contains(q) ||
-          s.name.toLowerCase().contains(q) ||
-          s.sub.toLowerCase().contains(q);
+          s.name.toLowerCase().contains(q);
       return matchCat && matchQ;
     }).toList();
+  }
+
+  // 동기 검색은 폴백 전용 (왓치리스트 복원 등 ticker→name 매핑 용도)
+  static SymbolInfo? findByTicker(String ticker) {
+    try {
+      return _fallback.firstWhere((s) => s.ticker == ticker);
+    } catch (_) {
+      return null;
+    }
   }
 }
 
