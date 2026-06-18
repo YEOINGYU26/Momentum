@@ -281,9 +281,15 @@ class _CandleChartState extends State<CandleChart> {
     final r   = _range();
     final vis = _c.sublist(r.s, r.e);
     if (vis.isEmpty) return null;
-    // floor: 스냅된 커서 중앙(slot+0.5)이 같은 슬롯으로 변환되도록
-    final slot = ((dx / _cw) - r.rp).floor().clamp(0, vis.length - 1);
-    return vis[slot].time;
+    final totalSlots = vis.length + r.futureSlots;
+    final slot = ((dx / _cw) - r.rp).floor().clamp(0, totalSlots - 1);
+    if (slot < vis.length) return vis[slot].time;
+    // future slot: 마지막 캔들에서 평균 간격만큼 외삽
+    final avgI = vis.length >= 2
+        ? (vis.last.time - vis.first.time) / math.max(1, vis.length - 1)
+        : 86400.0;
+    final fi = slot - vis.length;
+    return (vis.last.time + (fi + 1) * avgI).round();
   }
 
   Offset _snapCursor(Offset raw) {
@@ -291,8 +297,8 @@ class _CandleChartState extends State<CandleChart> {
     final r   = _range();
     final vis = _c.sublist(r.s, r.e);
     if (vis.isEmpty) return raw;
-    // floor: slot + 0.5(중앙)이 다시 스냅될 때 같은 슬롯으로 돌아오도록 (멱등성 보장)
-    final slot = ((raw.dx / _cw) - r.rp).floor().clamp(0, vis.length - 1);
+    final totalSlots = vis.length + r.futureSlots;
+    final slot = ((raw.dx / _cw) - r.rp).floor().clamp(0, totalSlots - 1);
     return Offset((r.rp + slot + 0.5) * _cw, raw.dy);
   }
 
@@ -1023,7 +1029,7 @@ class _CandleChartState extends State<CandleChart> {
               ),
             ),
             child: Image.asset('assets/icons/pencil_draw.png',
-                width: 18, height: 18,
+                width: 26, height: 26,
                 color: _tool == DrawTool.trendLine ? AppColors.green : AppColors.gray),
           ),
         ),
@@ -1617,10 +1623,11 @@ class _Painter extends CustomPainter {
 
     // Crosshair
     if (cross != null && phase == DrawPhase.idle) {
-      final pos  = cross!;
-      final slot = ((pos.dx / cw) - rp).round().clamp(0, vc.length - 1);
+      final pos        = cross!;
+      final totalSlots = vc.length + futureSlots;
+      final slot = ((pos.dx / cw) - rp).round().clamp(0, totalSlots - 1);
       final sx   = (rp + slot + 0.5) * cw;
-      final c    = vc[slot];
+      final isFuture = slot >= vc.length;
       final dash = Paint()..color = AppColors.gray.withValues(alpha: 0.7)..strokeWidth = 0.8;
       _dashed(canvas, Offset(sx, 0), Offset(sx, size.height), dash);
       if (pos.dy >= 0 && pos.dy < pH) {
@@ -1628,16 +1635,27 @@ class _Painter extends CustomPainter {
         final pr = pMin + (1 - pos.dy / pH) * pSpan;
         _axisLabel(canvas, chartW + 4, pos.dy, _fmt(pr), center: false);
       }
-      // Volume label at right axis, in volume zone
-      final volStr = _fmtVol(c.volume);
-      _axisLabel(canvas, chartW + 4, pH + vH / 2, volStr,
-          center: false, color: Colors.white54);
-
-      final dtc = DateTime.fromMillisecondsSinceEpoch(c.time * 1000, isUtc: true);
+      // Volume (과거 캔들만)
+      if (!isFuture) {
+        final volStr = _fmtVol(vc[slot].volume);
+        _axisLabel(canvas, chartW + 4, pH + vH / 2, volStr,
+            center: false, color: Colors.white54);
+      }
+      // Time label
+      final int crossTime;
+      if (!isFuture) {
+        crossTime = vc[slot].time;
+      } else {
+        final fi = slot - vc.length;
+        crossTime = (vc.last.time + (fi + 1) * avgI).round();
+      }
+      final dtc = DateTime.fromMillisecondsSinceEpoch(crossTime * 1000, isUtc: true);
       final cl = hhmm
           ? '${dtc.hour.toString().padLeft(2,'0')}:${dtc.minute.toString().padLeft(2,'0')}'
           : '${dtc.year}/${dtc.month.toString().padLeft(2,'0')}/${dtc.day.toString().padLeft(2,'0')}';
-      _axisLabel(canvas, sx, xAxisY, cl, center: true);
+      _axisLabel(canvas, sx, xAxisY, cl,
+          center: true,
+          color: isFuture ? const Color(0xFF4A5368) : Colors.white);
     }
 
     // Drawing cursor
