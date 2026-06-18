@@ -64,6 +64,7 @@ class ChartLine {
   final bool   isHorizontal;
   final double width;
   final LineStyle style;
+  final LineRole  role;
 
   const ChartLine({
     required this.startTime, required this.endTime,
@@ -72,12 +73,13 @@ class ChartLine {
     this.isHorizontal = false,
     this.width = 1.5,
     this.style = LineStyle.solid,
+    this.role = LineRole.none,
   });
 
   ChartLine copyWith({
     int? startTime, int? endTime,
     double? startPrice, double? endPrice,
-    Color? color, double? width, LineStyle? style,
+    Color? color, double? width, LineStyle? style, LineRole? role,
   }) => ChartLine(
     startTime:  startTime  ?? this.startTime,
     endTime:    endTime    ?? this.endTime,
@@ -85,6 +87,7 @@ class ChartLine {
     endPrice:   endPrice   ?? this.endPrice,
     color: color ?? this.color, isHorizontal: isHorizontal,
     width: width ?? this.width, style: style ?? this.style,
+    role: role ?? this.role,
   );
 }
 
@@ -151,12 +154,14 @@ class CandleChart extends StatefulWidget {
   final void Function(List<ChartLineInfo>)? onLinesChanged;
   final String pricePrefix;
   final String ticker;
+  final List<ChartLineInfo> initialLines;
 
   const CandleChart({
     super.key, required this.candles,
     this.onCrosshair, this.onLinesChanged,
     this.pricePrefix = '',
     this.ticker = '',
+    this.initialLines = const [],
   });
 
   @override
@@ -173,7 +178,7 @@ class _CandleChartState extends State<CandleChart> {
   static const double _volR      = 0.18;
   static const double _panelH    = 80.0;
   static const double _baseToolH = 36.0;
-  static const int    _futureBuf = 130;   // ~6 months
+  static const int    _futureBuf = 500;
 
   double _vis      = 60;
   double _scroll   = 0;
@@ -193,6 +198,7 @@ class _CandleChartState extends State<CandleChart> {
   final Set<IndicatorType> _activeIndicators = {};
   final Map<IndicatorType, IndicatorConfig> _indConfigs =
       Map.from(_kDefaultConfigs);
+  bool _indicatorPickerOpen = false;
 
   DrawTool  _tool  = DrawTool.none;
   DrawPhase _phase = DrawPhase.idle;
@@ -229,6 +235,26 @@ class _CandleChartState extends State<CandleChart> {
       _activeIndicators.where(_panelIndicatorTypes.contains).length * _panelH;
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.initialLines.isNotEmpty) {
+      _lines.addAll(widget.initialLines.map(_infoToLine));
+    }
+  }
+
+  /// ChartLineInfo → ChartLine 변환 (색상은 역할 기반)
+  static ChartLine _infoToLine(ChartLineInfo info) => ChartLine(
+    startTime:   info.startTime,
+    endTime:     info.endTime,
+    startPrice:  info.startPrice,
+    endPrice:    info.endPrice,
+    isHorizontal: info.isHorizontal,
+    role:        info.role,
+    color:       info.role != LineRole.none
+                   ? info.role.roleColor : Colors.white70,
+  );
+
+  @override
   void didUpdateWidget(CandleChart old) {
     super.didUpdateWidget(old);
     if (old.candles != widget.candles) {
@@ -250,7 +276,9 @@ class _CandleChartState extends State<CandleChart> {
     final futureSlots = off < 0 ? (-off).round().clamp(0, _futureBuf) : 0;
     final normalOff   = math.max(0.0, off);
     final e        = (_c.length - normalOff.round()).clamp(0, _c.length);
-    final wantData = (_vis.ceil() - futureSlots).clamp(0, _c.length);
+    // 미래로 스크롤해도 최소 20개 캔들(또는 전체 데이터 수)은 항상 표시
+    final minCandles = math.max(1, math.min(20, math.min(_c.length, _vis.floor())));
+    final wantData = (_vis.ceil() - futureSlots).clamp(minCandles, _c.length);
     final s        = (e - wantData).clamp(0, _c.length);
     final cnt      = e - s;
     final rp       = (_vis - cnt - futureSlots).clamp(0.0, double.infinity);
@@ -538,11 +566,12 @@ class _CandleChartState extends State<CandleChart> {
 
   void _notifyLinesChanged() {
     final infos = _lines.map((ln) => ChartLineInfo(
-      startPrice:  ln.startPrice,
-      endPrice:    ln.endPrice,
-      startTime:   ln.startTime,
-      endTime:     ln.endTime,
+      startPrice:   ln.startPrice,
+      endPrice:     ln.endPrice,
+      startTime:    ln.startTime,
+      endTime:      ln.endTime,
       isHorizontal: ln.isHorizontal,
+      role:         ln.role,
     )).toList();
     widget.onLinesChanged?.call(infos);
   }
@@ -552,12 +581,14 @@ class _CandleChartState extends State<CandleChart> {
     final r   = _range();
     final vis = _c.sublist(r.s, r.e);
     if (vis.isEmpty) { return; }
-    final slot = ((pos.dx / _cw) - r.rp).round().clamp(0, vis.length - 1);
+    final totalSlots = vis.length + r.futureSlots;
+    final slot = ((pos.dx / _cw) - r.rp).round().clamp(0, totalSlots - 1);
+    final isFuture = slot >= vis.length;
     setState(() {
       _cross = Offset((r.rp + slot + 0.5) * _cw, pos.dy);
-      _crossCandle = vis[slot];
+      _crossCandle = isFuture ? null : vis[slot];
     });
-    widget.onCrosshair?.call(vis[slot]);
+    widget.onCrosshair?.call(isFuture ? null : vis[slot]);
   }
 
   Color _indColor(IndicatorType type) {
@@ -594,23 +625,25 @@ class _CandleChartState extends State<CandleChart> {
     final col  = isUp ? AppColors.green : AppColors.red;
     final pfx  = widget.pricePrefix;
     Widget lbl(String k, String v, [Color? vc]) => RichText(text: TextSpan(children: [
-      TextSpan(text: '$k ', style: const TextStyle(color: AppColors.gray, fontSize: 11)),
+      TextSpan(text: '$k ', style: const TextStyle(color: AppColors.gray, fontSize: 10)),
       TextSpan(text: v,  style: TextStyle(
-          color: vc ?? Colors.white70, fontSize: 11, fontWeight: FontWeight.w600)),
+          color: vc ?? Colors.white70, fontSize: 10, fontWeight: FontWeight.w600)),
     ]));
     return Container(
-      height: 22,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      color: Colors.black.withValues(alpha: 0.25),
-      child: Row(children: [
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.65),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
         lbl('시', _fmtPrice(pfx, c.open)),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         lbl('고', _fmtPrice(pfx, c.high),  AppColors.green),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         lbl('저', _fmtPrice(pfx, c.low),   AppColors.red),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         lbl('종', _fmtPrice(pfx, c.close), col),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         lbl('거', _fmtVol(c.volume)),
       ]),
     );
@@ -626,7 +659,6 @@ class _CandleChartState extends State<CandleChart> {
       final clampY = math.max(0.0, _chartH - 52);
       return Column(children: [
         _buildToolbar(),
-        if (_crossCandle != null) _buildLegend(_crossCandle!),
         Expanded(
           child: Stack(children: [
             GestureDetector(
@@ -737,6 +769,12 @@ class _CandleChartState extends State<CandleChart> {
                 child: const SizedBox.expand(),
               ),
             ),
+            // OHLCV legend overlay (top-right)
+            if (_crossCandle != null)
+              Positioned(
+                right: _axisW + 4, top: 4,
+                child: _buildLegend(_crossCandle!),
+              ),
             // Indicator labels (tappable)
             if (_activeIndicators.isNotEmpty)
               Positioned(
@@ -1018,7 +1056,9 @@ class _CandleChartState extends State<CandleChart> {
         GestureDetector(
           onTap: () => _activateTool(DrawTool.trendLine),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            width: 26,
+            height: 26,
+            padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(
               color: _tool == DrawTool.trendLine
                   ? AppColors.green.withValues(alpha: 0.2) : Colors.transparent,
@@ -1029,7 +1069,7 @@ class _CandleChartState extends State<CandleChart> {
               ),
             ),
             child: Image.asset('assets/icons/pencil_draw.png',
-                width: 26, height: 26,
+                fit: BoxFit.contain,
                 color: _tool == DrawTool.trendLine ? AppColors.green : AppColors.gray),
           ),
         ),
@@ -1037,19 +1077,20 @@ class _CandleChartState extends State<CandleChart> {
         GestureDetector(
           onTap: _showIndicatorPicker,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            height: 26,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
             decoration: BoxDecoration(
-              color: _activeIndicators.isNotEmpty
-                  ? AppColors.green.withValues(alpha: 0.12) : Colors.transparent,
+              color: (_activeIndicators.isNotEmpty || _indicatorPickerOpen)
+                  ? AppColors.green.withValues(alpha: 0.2) : Colors.transparent,
               borderRadius: BorderRadius.circular(6),
               border: Border.all(
-                color: _activeIndicators.isNotEmpty
-                    ? AppColors.green.withValues(alpha: 0.5) : Colors.white24,
+                color: (_activeIndicators.isNotEmpty || _indicatorPickerOpen)
+                    ? AppColors.green.withValues(alpha: 0.6) : Colors.white24,
               ),
             ),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               Text('보조지표', style: TextStyle(
-                color: _activeIndicators.isNotEmpty ? AppColors.green : AppColors.gray,
+                color: (_activeIndicators.isNotEmpty || _indicatorPickerOpen) ? AppColors.green : AppColors.gray,
                 fontSize: 10, fontWeight: FontWeight.w600,
               )),
               if (_activeIndicators.isNotEmpty) ...[
@@ -1061,6 +1102,43 @@ class _CandleChartState extends State<CandleChart> {
                   child: Text('${_activeIndicators.length}', style: const TextStyle(
                     color: Colors.black, fontSize: 9, fontWeight: FontWeight.bold,
                   )),
+                ),
+              ],
+            ]),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // ── 매매선 버튼
+        GestureDetector(
+          onTap: _showTradingLinePicker,
+          child: Container(
+            height: 26,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: _lines.any((l) => l.role != LineRole.none)
+                  ? const Color(0xFFCE93D8).withValues(alpha: 0.2) : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: _lines.any((l) => l.role != LineRole.none)
+                    ? const Color(0xFFCE93D8).withValues(alpha: 0.6) : Colors.white24,
+              ),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text('매매선', style: TextStyle(
+                color: _lines.any((l) => l.role != LineRole.none)
+                    ? const Color(0xFFCE93D8) : AppColors.gray,
+                fontSize: 10, fontWeight: FontWeight.w600,
+              )),
+              if (_lines.any((l) => l.role != LineRole.none)) ...[
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFCE93D8), borderRadius: BorderRadius.circular(8)),
+                  child: Text(
+                    '${_lines.where((l) => l.role != LineRole.none).length}',
+                    style: const TextStyle(color: Colors.black, fontSize: 9, fontWeight: FontWeight.bold),
+                  ),
                 ),
               ],
             ]),
@@ -1142,6 +1220,23 @@ class _CandleChartState extends State<CandleChart> {
             ),
           )),
           _fDiv(),
+          // 역할 지정 버튼
+          GestureDetector(
+            onTap: () { final i = _selIdx; if (i != null) _showRolePicker(i); },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(ln.role.icon, size: 14,
+                    color: ln.role != LineRole.none ? ln.role.roleColor : Colors.white54),
+                const SizedBox(width: 3),
+                Text(ln.role.label, style: TextStyle(
+                  color: ln.role != LineRole.none ? ln.role.roleColor : Colors.white54,
+                  fontSize: 10, fontWeight: FontWeight.w600,
+                )),
+              ]),
+            ),
+          ),
+          _fDiv(),
           GestureDetector(
             onTap: _cloneSel,
             child: const Padding(
@@ -1173,9 +1268,195 @@ class _CandleChartState extends State<CandleChart> {
   Widget _fDiv() => Container(
     width: 1, height: 22, color: Colors.white.withValues(alpha: 0.1));
 
+  // ── 역할 지정 ──────────────────────────────────────────────────────────────
+
+  void _showRolePicker(int lineIdx) {
+    final ln = _lines[lineIdx];
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1F2E),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            margin: const EdgeInsets.only(bottom: 14),
+            width: 36, height: 4,
+            decoration: BoxDecoration(
+                color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+          ),
+          const Text('역할 지정', style: TextStyle(
+              color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 14),
+          Wrap(spacing: 8, runSpacing: 8, children: LineRole.values.map((role) {
+            final sel = ln.role == role;
+            return GestureDetector(
+              onTap: () {
+                setState(() {
+                  _lines[lineIdx] = ln.copyWith(
+                    role: role,
+                    color: role != LineRole.none ? role.roleColor : ln.color,
+                  );
+                });
+                _notifyLinesChanged();
+                Navigator.pop(context);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                decoration: BoxDecoration(
+                  color: sel
+                      ? role.roleColor.withValues(alpha: 0.2)
+                      : Colors.white.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: sel ? role.roleColor : Colors.white24,
+                    width: sel ? 1.5 : 1,
+                  ),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(role.icon, size: 14, color: sel ? role.roleColor : Colors.white54),
+                  const SizedBox(width: 6),
+                  Text(role.label, style: TextStyle(
+                    color: sel ? role.roleColor : Colors.white70,
+                    fontSize: 12, fontWeight: sel ? FontWeight.bold : FontWeight.normal,
+                  )),
+                ]),
+              ),
+            );
+          }).toList()),
+        ]),
+      ),
+    );
+  }
+
+  // ── 매매선 관리 피커 ───────────────────────────────────────────────────────
+
+  void _showTradingLinePicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1F2E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => StatefulBuilder(builder: (_, setSheet) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.55, minChildSize: 0.35, maxChildSize: 0.85,
+          expand: false,
+          builder: (_, scroll) => Column(children: [
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                  color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 4, 20, 4),
+              child: Text('매매선 관리', style: TextStyle(
+                  color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Text('추세선에 역할을 지정하거나 새 매매선을 그립니다.',
+                style: TextStyle(color: Color(0xFF8891A4), fontSize: 11)),
+            ),
+            Expanded(
+              child: _lines.isEmpty
+                  ? Center(child: Text('추세선이 없습니다.\n아래 버튼으로 새 선을 그려보세요.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: AppColors.gray.withValues(alpha: 0.6), fontSize: 13)))
+                  : ListView.builder(
+                      controller: scroll,
+                      itemCount: _lines.length,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      itemBuilder: (_, i) {
+                        final ln = _lines[i];
+                        final roleColor = ln.role != LineRole.none
+                            ? ln.role.roleColor : Colors.white38;
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.05),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: ln.role != LineRole.none
+                                  ? roleColor.withValues(alpha: 0.4) : Colors.white12,
+                            ),
+                          ),
+                          child: ListTile(
+                            leading: Container(
+                              width: 32, height: 32,
+                              decoration: BoxDecoration(
+                                color: roleColor.withValues(alpha: 0.15),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(ln.role.icon, size: 16, color: roleColor),
+                            ),
+                            title: Text(ln.role.label, style: TextStyle(
+                              color: roleColor, fontSize: 13, fontWeight: FontWeight.w600,
+                            )),
+                            subtitle: Text(
+                              ln.isHorizontal
+                                  ? '수평선  ${ln.startPrice.toStringAsFixed(0)}원'
+                                  : '${ln.startPrice.toStringAsFixed(0)} → ${ln.endPrice.toStringAsFixed(0)}원',
+                              style: const TextStyle(color: Color(0xFF8891A4), fontSize: 11),
+                            ),
+                            trailing: TextButton(
+                              onPressed: () {
+                                Navigator.pop(context);
+                                _showRolePicker(i);
+                              },
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFFCE93D8),
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: const Text('역할 변경', style: TextStyle(fontSize: 11)),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, MediaQuery.of(context).padding.bottom + 12),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    setState(() {
+                      _tool = DrawTool.trendLine;
+                      _phase = DrawPhase.placingFirst;
+                      _cursor = Offset(_chartW / 2, _chartH * 0.35);
+                      _drawFinger = null; _drawCursorBase = null;
+                      _fpTime = null; _fpPrice = null;
+                      _selIdx = null; _selEndpoint = null;
+                      _cross = null; _crossCandle = null;
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFCE93D8).withValues(alpha: 0.2),
+                    foregroundColor: const Color(0xFFCE93D8),
+                    side: const BorderSide(color: Color(0xFFCE93D8), width: 0.8),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('새 선 그리기', style: TextStyle(fontSize: 13)),
+                ),
+              ),
+            ),
+          ]),
+        );
+      }),
+    );
+  }
+
   // ── Indicator picker ──────────────────────────────────────────────────────
 
   void _showIndicatorPicker() {
+    setState(() => _indicatorPickerOpen = true);
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1A1F2E),
@@ -1265,7 +1546,7 @@ class _CandleChartState extends State<CandleChart> {
           ]),
         );
       }),
-    );
+    ).then((_) { if (mounted) setState(() => _indicatorPickerOpen = false); });
   }
 
   // ── Popup menus ───────────────────────────────────────────────────────────
@@ -1430,7 +1711,7 @@ class _Painter extends CustomPainter {
   static const _timeH    = 26.0;
   static const _volR     = 0.18;
   static const _panelH   = 80.0;
-  static const _futureBuf = 130;
+  static const _futureBuf = 500;
 
   _Painter({
     required this.candles, required this.vis, required this.scroll,
@@ -1455,7 +1736,8 @@ class _Painter extends CustomPainter {
     final futureSlots = off < 0 ? (-off).round().clamp(0, _futureBuf) : 0;
     final normalOff   = math.max(0.0, off);
     final e        = (candles.length - normalOff.round()).clamp(0, candles.length);
-    final wantData = (vis.ceil() - futureSlots).clamp(0, candles.length);
+    final minCandles = math.max(1, math.min(20, math.min(candles.length, vis.floor().toInt())));
+    final wantData = (vis.ceil() - futureSlots).clamp(minCandles, candles.length);
     final s        = (e - wantData).clamp(0, candles.length);
     final vc       = candles.sublist(s, e);
     if (vc.isEmpty) { canvas.restore(); return; }
@@ -1559,12 +1841,12 @@ class _Painter extends CustomPainter {
       panY += _panelH;
     }
 
-    // Price axis labels
+    // Price axis labels — nice round ticks
     final tp = TextPainter(textDirection: TextDirection.ltr);
-    for (var i = 1; i <= 4; i++) {
-      final p = pMax - pSpan * i / 4;
-      final y = pH * i / 4;
-      tp.text = TextSpan(text: _fmt(p), style: const TextStyle(color: AppColors.gray, fontSize: 10));
+    for (final p in _niceTicks(pMin, pMax, 4)) {
+      final y = pyF(p);
+      if (y < -2 || y > pH + 2) continue;
+      tp.text = TextSpan(text: _fmtAxis(p), style: const TextStyle(color: AppColors.gray, fontSize: 10));
       tp.layout();
       tp.paint(canvas, Offset(chartW + 4, y - tp.height / 2));
     }
@@ -2063,6 +2345,29 @@ class _Painter extends CustomPainter {
               Paint()..color = ln.color..strokeWidth = 1..style = PaintingStyle.stroke);
         }
       }
+      // 역할 라벨 (역할 있는 선만)
+      if (ln.role != LineRole.none) {
+        final labelX = x2.clamp(4.0, chartW - 52.0);
+        final labelY = (y2 - 18).clamp(2.0, pH - 16.0);
+        final roleColor = ln.role.roleColor;
+        final tp = TextPainter(
+          text: TextSpan(
+            text: ln.role.label,
+            style: TextStyle(color: roleColor, fontSize: 9, fontWeight: FontWeight.bold),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        final bgRect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(labelX - 3, labelY - 2, tp.width + 6, tp.height + 4),
+          const Radius.circular(3),
+        );
+        canvas.drawRRect(bgRect,
+            Paint()..color = roleColor.withValues(alpha: 0.18));
+        canvas.drawRRect(bgRect,
+            Paint()..color = roleColor.withValues(alpha: 0.5)
+              ..style = PaintingStyle.stroke..strokeWidth = 0.8);
+        tp.paint(canvas, Offset(labelX, labelY));
+      }
     }
   }
 
@@ -2115,6 +2420,43 @@ class _Painter extends CustomPainter {
       n = p.toStringAsFixed(2);
     }
     return '$prefix$n';
+  }
+
+  /// 가격 축 레이블 — 콤마 구분 정수 (줌 레벨에 따라 자릿수 자동 조정)
+  String _fmtAxis(double p) {
+    if (p < 0) return '$prefix${_fmtAxisAbs(-p)}';
+    return '$prefix${_fmtAxisAbs(p)}';
+  }
+
+  static String _fmtAxisAbs(double p) {
+    if (p < 0.001) return p.toStringAsFixed(6);
+    if (p < 1)     return p.toStringAsFixed(4);
+    if (p < 10)    return p.toStringAsFixed(p % 1 == 0 ? 0 : 2);
+    // 10 이상: 정수로 반올림 후 콤마 표기
+    final ip = p.round();
+    return ip.toString().replaceAllMapped(
+        RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
+  }
+
+  /// lo~hi 사이의 깔끔한 눈금 목록
+  static List<double> _niceTicks(double lo, double hi, int target) {
+    final range = hi - lo;
+    if (range <= 0) return [];
+    final rawStep = range / target;
+    final mag = math.pow(10, (math.log(rawStep) / math.ln10).floor()).toDouble();
+    final norm = rawStep / mag;
+    final step = norm < 1.5 ? mag
+               : norm < 3.5 ? mag * 2
+               : norm < 7.5 ? mag * 5
+               : mag * 10;
+    final start = (lo / step).ceil() * step;
+    final ticks = <double>[];
+    var t = start;
+    while (t <= hi + step * 0.01) {
+      ticks.add(t);
+      t += step;
+    }
+    return ticks;
   }
 
   static String _fmtVol(double v) {

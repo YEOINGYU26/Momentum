@@ -514,11 +514,15 @@ class _ChartScreenState extends State<ChartScreen> {
       );
     }
 
+    final savedLines = context.read<ChartProvider>()
+        .getLinesForTicker(_currentTicker);
     return ClipRect(
       child: CandleChart(
+        key: ValueKey(_currentTicker),
         candles: _displayCandles,
         pricePrefix: _pricePrefix,
         ticker: _currentTicker,
+        initialLines: savedLines,
         onCrosshair: (_) {},
         onLinesChanged: (lines) =>
             context.read<ChartProvider>().setChartLines(lines),

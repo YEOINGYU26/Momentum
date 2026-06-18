@@ -459,10 +459,30 @@ class _ConditionalTabState extends State<_ConditionalTab> {
   }
 
   void _pickTrendline(BuildContext context) {
-    final lines = context.read<ChartProvider>().chartLines;
-    if (lines.isEmpty) {
+    final ticker = _selected?.ticker;
+    if (ticker == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('차트 탭에서 추세선을 먼저 그려주세요'),
+        content: Text('종목을 먼저 선택하세요'),
+        backgroundColor: AppColors.gray,
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
+    }
+    final stockName = _selected?.name ?? ticker;
+    final allLines = context.read<ChartProvider>().getLinesForTicker(ticker);
+    final targetRole = _side == 'buy' ? LineRole.buyTrigger : LineRole.sellTrigger;
+    final lines = allLines.where((l) => l.role == targetRole).toList();
+    if (allLines.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('$stockName 차트에서 추세선을 먼저 그려주세요'),
+        backgroundColor: AppColors.gray,
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
+    }
+    if (lines.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('$stockName 차트에 ${_side == 'buy' ? '매수선' : '매도선'}이 없습니다.\n차트에서 추세선 역할을 지정해주세요.'),
         backgroundColor: AppColors.gray,
         behavior: SnackBarBehavior.floating,
       ));
@@ -475,6 +495,7 @@ class _ConditionalTabState extends State<_ConditionalTab> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => _TrendlinePickSheet(
         lines: lines,
+        side: _side,
         onPick: (line) {
           Navigator.pop(context);
           setState(() {
@@ -536,7 +557,9 @@ class _ConditionalTabState extends State<_ConditionalTab> {
 
   @override
   Widget build(BuildContext context) {
-    final chartLines = context.watch<ChartProvider>().chartLines;
+    final chartLines = _selected != null
+        ? context.watch<ChartProvider>().getLinesForTicker(_selected!.ticker)
+        : const <ChartLineInfo>[];
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
       behavior: HitTestBehavior.translucent,
@@ -706,9 +729,17 @@ class _ConditionalTabState extends State<_ConditionalTab> {
                     color: Color(0xFF6C63FF), size: 16),
                 const SizedBox(width: 6),
                 Text(
-                  chartLines.isNotEmpty
-                      ? '차트 추세선에서 불러오기 (${chartLines.length}개)'
-                      : '차트 추세선에서 불러오기',
+                  _selected == null
+                      ? '종목 선택 후 추세선 불러오기'
+                      : () {
+                          final role = _side == 'buy' ? LineRole.buyTrigger : LineRole.sellTrigger;
+                          final matched = chartLines.where((l) => l.role == role).length;
+                          final roleName = _side == 'buy' ? '매수선' : '매도선';
+                          final name = _selected!.name;
+                          if (chartLines.isEmpty) return '$name 차트에 추세선 없음';
+                          if (matched == 0) return '$name 차트에 $roleName 없음';
+                          return '$name $roleName 불러오기 (${matched}개)';
+                        }(),
                   style: const TextStyle(
                       color: Color(0xFF6C63FF),
                       fontSize: 13,
@@ -1004,9 +1035,10 @@ class _TickerSearchSheetState extends State<_TickerSearchSheet> {
 
 class _TrendlinePickSheet extends StatelessWidget {
   final List<ChartLineInfo> lines;
+  final String side;
   final void Function(ChartLineInfo line) onPick;
 
-  const _TrendlinePickSheet({required this.lines, required this.onPick});
+  const _TrendlinePickSheet({required this.lines, required this.side, required this.onPick});
 
   @override
   Widget build(BuildContext context) {
@@ -1023,10 +1055,10 @@ class _TrendlinePickSheet extends StatelessWidget {
             borderRadius: BorderRadius.circular(2),
           ),
         ),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(20, 4, 20, 12),
-          child: Text('추세선 선택',
-              style: TextStyle(
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+          child: Text('${side == 'buy' ? '매수선' : '매도선'} 선택',
+              style: const TextStyle(
                   color: Colors.white,
                   fontSize: 16,
                   fontWeight: FontWeight.bold)),
@@ -1034,7 +1066,7 @@ class _TrendlinePickSheet extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
           child: Text(
-            '선택한 추세선의 가격이 기울기대로 움직이며, 현재가가 해당 가격에 닿으면 주문이 실행됩니다.',
+            '선이 현재가와 만나는 순간 ${side == 'buy' ? '매수' : '매도'} 주문이 자동 실행됩니다.',
             style: TextStyle(
                 color: AppColors.gray.withValues(alpha: 0.8), fontSize: 11),
           ),
@@ -1046,38 +1078,35 @@ class _TrendlinePickSheet extends StatelessWidget {
           itemBuilder: (_, i) {
             final ln = lines[i];
             final price = ln.priceAt(now);
+            final hasRole = ln.role != LineRole.none;
+            final iconColor = hasRole ? ln.role.roleColor : const Color(0xFF6C63FF);
             return ListTile(
               onTap: () => onPick(ln),
               leading: Container(
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF6C63FF).withValues(alpha: 0.15),
+                  color: iconColor.withValues(alpha: 0.15),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.timeline,
-                    color: Color(0xFF6C63FF), size: 18),
+                child: Icon(hasRole ? ln.role.icon : Icons.timeline,
+                    color: iconColor, size: 18),
               ),
-              title: Text(ln.label,
-                  style: const TextStyle(color: Colors.white, fontSize: 13)),
+              title: Text(
+                '오늘 기준 ${_fmtNum(price)}원',
+                style: TextStyle(
+                  color: iconColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               subtitle: Text(
-                ln.isHorizontal ? '수평 고정가' : '기울기 있는 추세선 (시간에 따라 가격 변동)',
-                style: const TextStyle(color: AppColors.gray, fontSize: 10),
+                ln.isHorizontal
+                    ? '수평 고정선 — 이 가격에 닿으면 ${side == 'buy' ? '매수' : '매도'}'
+                    : '시간에 따라 가격이 움직이는 추세선\n현재가가 이 가격에 닿으면 ${side == 'buy' ? '매수' : '매도'}',
+                style: const TextStyle(color: AppColors.gray, fontSize: 10, height: 1.4),
               ),
-              trailing: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text('${_fmtNum(price)}원',
-                      style: const TextStyle(
-                          color: AppColors.green,
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold)),
-                  const Text('현재 가격',
-                      style: TextStyle(
-                          color: AppColors.gray, fontSize: 9)),
-                ],
-              ),
+              isThreeLine: !ln.isHorizontal,
             );
           },
         ),

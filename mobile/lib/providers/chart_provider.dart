@@ -3,10 +3,16 @@ import '../models/chart_line_info.dart';
 
 class ChartProvider extends ChangeNotifier {
   String _ticker = '005930';
-  List<ChartLineInfo> _chartLines = [];
+  final Map<String, List<ChartLineInfo>> _linesByTicker = {};
 
   String get ticker => _ticker;
-  List<ChartLineInfo> get chartLines => List.unmodifiable(_chartLines);
+
+  /// 현재 선택된 티커의 라인
+  List<ChartLineInfo> get chartLines => getLinesForTicker(_ticker);
+
+  /// 특정 티커의 라인 반환
+  List<ChartLineInfo> getLinesForTicker(String t) =>
+      List.unmodifiable(_linesByTicker[t] ?? []);
 
   void setTicker(String t) {
     if (_ticker == t) return;
@@ -14,8 +20,9 @@ class ChartProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 현재 ticker 에 대한 라인 저장
   void setChartLines(List<ChartLineInfo> lines) {
-    _chartLines = lines;
+    _linesByTicker[_ticker] = lines;
     notifyListeners();
   }
 }

@@ -11,6 +11,17 @@ from app.services.push import PushNotifier
 logger = logging.getLogger(__name__)
 
 
+def _tick_unit(price: int) -> int:
+    """KIS 국내주식 호가 단위 (코스피/코스닥 공통)"""
+    if price < 2_000:       return 1
+    if price < 5_000:       return 5
+    if price < 20_000:      return 10
+    if price < 50_000:      return 50
+    if price < 200_000:     return 100
+    if price < 500_000:     return 500
+    return 1_000
+
+
 @dataclass
 class PriceAlert:
     ticker: str
@@ -99,6 +110,9 @@ class PriceMonitorService:
             if price is None:
                 continue
             target = alert.effective_target(now_ts)
+            # KIS 호가 단위에 맞게 반올림
+            tick = _tick_unit(target)
+            order_price = round(target / tick) * tick
             hit = (
                 (alert.side == "buy"  and price <= target)
                 or (alert.side == "sell" and price >= target)
@@ -108,13 +122,13 @@ class PriceMonitorService:
 
             alert.triggered = True
             kind = "추세선" if alert.is_trendline else "지정가"
-            logger.info("%s 도달 — %s %s %d주 @ %d (목표 %d)",
-                        kind, alert.side, alert.ticker, alert.quantity, price, target)
+            logger.info("%s 도달 — %s %s %d주 @ %d (목표 %d → 주문가 %d)",
+                        kind, alert.side, alert.ticker, alert.quantity, price, target, order_price)
             try:
                 if alert.side == "buy":
-                    result = await self._orders.buy_limit(alert.ticker, alert.quantity, target)
+                    result = await self._orders.buy_limit(alert.ticker, alert.quantity, order_price)
                 else:
-                    result = await self._orders.sell_limit(alert.ticker, alert.quantity, target)
+                    result = await self._orders.sell_limit(alert.ticker, alert.quantity, order_price)
                 await self._notifier.notify_order(alert.side, alert.ticker, price, alert.quantity)
                 logger.info("주문 완료: %s", result)
             except Exception as e:
