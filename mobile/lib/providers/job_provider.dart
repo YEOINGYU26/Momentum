@@ -30,15 +30,19 @@ class JobProvider extends ChangeNotifier {
   Future<void> addJob({
     required String ticker,
     required String strategyName,
-    int? intervalSeconds,
+    required int quantity,
+    int intervalSeconds = 60,
+    String dataInterval = 'D',
     String? cronExpression,
   }) async {
     final body = <String, dynamic>{
       'ticker': ticker,
       'strategy_name': strategyName,
+      'quantity': quantity,
       'interval_seconds': intervalSeconds,
-      'cron_expression': cronExpression,
-    }..removeWhere((_, v) => v == null);
+      'data_interval': dataInterval,
+      if (cronExpression != null) 'cron': cronExpression,
+    };
     await ApiClient.instance.post('/api/v1/scheduler/jobs', body);
     await fetchJobs();
   }

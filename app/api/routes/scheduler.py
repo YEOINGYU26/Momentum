@@ -12,7 +12,8 @@ class AddJobRequest(BaseModel):
     ticker: str = Field(..., examples=["005930"])
     strategy_name: str = Field(..., examples=["rsi"])
     interval_seconds: int = Field(default=300, ge=0, description="0이면 cron 사용")
-    quantity: int = Field(..., gt=0)
+    quantity: int = Field(default=1, gt=0)
+    data_interval: str = Field(default="D", pattern="^(D|W|M)$", description="D=일봉, W=주봉, M=월봉")
     cron: Optional[str] = Field(default=None, examples=["*/5 9-15 * * 1-5"])
 
 
@@ -28,6 +29,7 @@ async def add_job(
                 strategy_name=req.strategy_name,
                 interval_seconds=req.interval_seconds,
                 quantity=req.quantity,
+                data_interval=req.data_interval,
                 cron=req.cron,
             )
         )

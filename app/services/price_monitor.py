@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from app.kis.market import MarketAPI
+from app.kis.market_hours import is_market_open
 from app.kis.orders import OrdersAPI
 from app.services.push import PushNotifier
 
@@ -55,6 +56,8 @@ class PriceMonitorService:
         return list(self._state.alerts)
 
     async def _check_once(self) -> None:
+        if not is_market_open():
+            return  # 장외시간 — 시세 조회·주문 모두 스킵
         active = [a for a in self._state.alerts if a.active and not a.triggered]
         if not active:
             return

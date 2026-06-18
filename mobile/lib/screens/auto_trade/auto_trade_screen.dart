@@ -64,38 +64,13 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
   }
 
   Widget _buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-      child: Row(
-        children: [
-          const Text('자동매매',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold)),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppColors.green.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                  color: AppColors.green.withValues(alpha: 0.3)),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.circle, size: 6, color: AppColors.green),
-                SizedBox(width: 4),
-                Text('LIVE',
-                    style: TextStyle(
-                        color: AppColors.green,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold)),
-              ],
-            ),
-          ),
-        ],
-      ),
+    return const Padding(
+      padding: EdgeInsets.fromLTRB(20, 16, 20, 0),
+      child: Text('자동매매',
+          style: TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.bold)),
     );
   }
 
@@ -144,7 +119,14 @@ class _StrategyTabState extends State<_StrategyTab> {
   String _strategyId = 'rsi';
   int _quantity = 10;
   int _intervalSec = 60;
+  String _dataInterval = 'D';
   bool _submitting = false;
+
+  static const _dataIntervals = [
+    (label: '일봉', value: 'D'),
+    (label: '주봉', value: 'W'),
+    (label: '월봉', value: 'M'),
+  ];
 
   static const _strategies = [
     _StrategyMeta(
@@ -213,7 +195,9 @@ class _StrategyTabState extends State<_StrategyTab> {
       await context.read<JobProvider>().addJob(
         ticker: s.ticker,
         strategyName: _strategyId,
+        quantity: _quantity,
         intervalSeconds: _intervalSec,
+        dataInterval: _dataInterval,
       );
       if (mounted) _snack('전략이 등록됐습니다', success: true);
     } catch (e) {
@@ -248,6 +232,10 @@ class _StrategyTabState extends State<_StrategyTab> {
         _SectionLabel('전략 선택'),
         const SizedBox(height: 10),
         _buildStrategyGrid(),
+        const SizedBox(height: 20),
+        _SectionLabel('데이터 주기'),
+        const SizedBox(height: 10),
+        _buildDataIntervalChips(),
         const SizedBox(height: 20),
         _SectionLabel('수량'),
         const SizedBox(height: 10),
@@ -364,6 +352,36 @@ class _StrategyTabState extends State<_StrategyTab> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildDataIntervalChips() {
+    return Wrap(
+      spacing: 8,
+      children: _dataIntervals.map((di) {
+        final sel = _dataInterval == di.value;
+        return GestureDetector(
+          onTap: () => setState(() => _dataInterval = di.value),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: sel ? const Color(0xFF6C63FF) : AppColors.card,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: sel
+                    ? const Color(0xFF6C63FF)
+                    : Colors.transparent,
+              ),
+            ),
+            child: Text(di.label,
+                style: TextStyle(
+                    color: sel ? Colors.white : AppColors.gray,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600)),
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -499,7 +517,10 @@ class _ConditionalTabState extends State<_ConditionalTab> {
   @override
   Widget build(BuildContext context) {
     final chartLines = context.watch<ChartProvider>().chartLines;
-    return ListView(
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      behavior: HitTestBehavior.translucent,
+      child: ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
       children: [
         _TickerPickerRow(
@@ -533,6 +554,7 @@ class _ConditionalTabState extends State<_ConditionalTab> {
         const SizedBox(height: 12),
         _PendingAlertsList(),
       ],
+      ),
     );
   }
 
@@ -594,37 +616,37 @@ class _ConditionalTabState extends State<_ConditionalTab> {
             ],
           ),
         ),
-        if (chartLines.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          GestureDetector(
-            onTap: () => _pickTrendline(ctx),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF6C63FF).withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                    color: const Color(0xFF6C63FF).withValues(alpha: 0.4)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.timeline,
-                      color: Color(0xFF6C63FF), size: 16),
-                  const SizedBox(width: 6),
-                  Text(
-                    '차트 추세선에서 불러오기 (${chartLines.length}개)',
-                    style: const TextStyle(
-                        color: Color(0xFF6C63FF),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600),
-                  ),
-                ],
-              ),
+        const SizedBox(height: 8),
+        GestureDetector(
+          onTap: () => _pickTrendline(ctx),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF6C63FF).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                  color: const Color(0xFF6C63FF).withValues(alpha: 0.4)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.timeline,
+                    color: Color(0xFF6C63FF), size: 16),
+                const SizedBox(width: 6),
+                Text(
+                  chartLines.isNotEmpty
+                      ? '차트 추세선에서 불러오기 (${chartLines.length}개)'
+                      : '차트 추세선에서 불러오기',
+                  style: const TextStyle(
+                      color: Color(0xFF6C63FF),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ],
     );
   }

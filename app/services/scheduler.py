@@ -18,6 +18,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.kis.market import MarketAPI
+from app.kis.market_hours import is_market_open
 from app.kis.orders import OrdersAPI
 from app.services.push import PushNotifier
 from app.strategies.base import Signal
@@ -42,6 +43,7 @@ class JobConfig:
     strategy_name: str
     interval_seconds: int       # 0이면 cron 사용
     quantity: int
+    data_interval: str = "D"    # D=일봉, W=주봉, M=월봉
     cron: Optional[str] = None  # ex) "*/5 9-15 * * 1-5"
 
 
@@ -149,11 +151,12 @@ class StrategyScheduler:
             result.append({
                 "job_id": job.id,
                 "ticker": cfg.ticker if cfg else "",
-                "strategy": cfg.strategy_name if cfg else "",
+                "strategy_name": cfg.strategy_name if cfg else "",
                 "interval_seconds": cfg.interval_seconds if cfg else 0,
+                "data_interval": cfg.data_interval if cfg else "D",
                 "cron": cfg.cron if cfg else None,
                 "quantity": cfg.quantity if cfg else 0,
-                "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
+                "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
                 "status": "paused" if job.next_run_time is None else "running",
                 "last_execution": history[-1].__dict__ if history else None,
             })
@@ -168,8 +171,18 @@ class StrategyScheduler:
 
     async def _execute(self, job_id: str, config: JobConfig) -> ExecutionRecord:
         executed_at = datetime.now().isoformat()
-        logger.info("[Scheduler] 실행: %s", job_id)
 
+        if not is_market_open():
+            logger.debug("[Scheduler] 장외시간 — 스킵: %s", job_id)
+            return ExecutionRecord(
+                job_id=job_id,
+                executed_at=executed_at,
+                signal="skip",
+                reason="장외시간",
+                confidence=0.0,
+            )
+
+        logger.info("[Scheduler] 실행: %s", job_id)
         try:
             record = await self._run_strategy(job_id, config, executed_at)
         except Exception as e:
@@ -192,7 +205,7 @@ class StrategyScheduler:
         self, job_id: str, config: JobConfig, executed_at: str
     ) -> ExecutionRecord:
         # 1. OHLCV 데이터 수집
-        rows = await self._market.get_daily_ohlcv(config.ticker, period="D")
+        rows = await self._market.get_daily_ohlcv(config.ticker, period=config.data_interval)
         if not rows:
             raise RuntimeError("OHLCV 데이터 없음")
 
