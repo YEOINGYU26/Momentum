@@ -99,7 +99,9 @@ class _ChartScreenState extends State<ChartScreen> {
       setState(() => _suggestions = []);
       return;
     }
-    setState(() => _suggestions = SymbolDatabase.search(q, '전체').take(6).toList());
+    SymbolDatabase.searchAsync(q, '전체').then((results) {
+      if (mounted) setState(() => _suggestions = results.take(6).toList());
+    });
   }
 
   void _selectSymbol(SymbolInfo s) {
@@ -109,10 +111,10 @@ class _ChartScreenState extends State<ChartScreen> {
     FocusScope.of(context).unfocus();
   }
 
-  void _updateStockName(String ticker) {
-    final results = SymbolDatabase.search(ticker, '전체').take(1).toList();
-    final name = results.isNotEmpty && results.first.ticker == ticker
-        ? results.first.name : '';
+  Future<void> _updateStockName(String ticker) async {
+    final results = await SymbolDatabase.searchAsync(ticker, '전체');
+    final match = results.where((s) => s.ticker == ticker).toList();
+    final name = match.isNotEmpty ? match.first.name : '';
     if (mounted) setState(() => _currentStockName = name);
   }
 

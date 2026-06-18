@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 
 from app.core.dependencies import get_market_api
 from app.data.symbols import search_symbols
+from app.kis import master as stock_master
 from app.kis.market import MarketAPI
 
 router = APIRouter(prefix="/market", tags=["market"])
@@ -28,8 +29,34 @@ _MINUTE_MAP = {
 
 @router.get("/search")
 async def search(q: str = "", category: str = "전체"):
-    results = search_symbols(q, category)
-    return [
+    # 국내주식: 마스터 캐시 우선 (2,500개+), 미로드 시 symbols.py 폴백
+    if category in ("전체", "주식") and stock_master.is_loaded():
+        master_results = stock_master.search(q, limit=100)
+        korean = [
+            {
+                "ticker":   s.ticker,
+                "name":     s.name,
+                "sub":      s.name,
+                "exchange": s.exchange,
+                "category": "주식",
+            }
+            for s in master_results
+        ]
+    else:
+        korean = [
+            {
+                "ticker":   s.ticker,
+                "name":     s.name,
+                "sub":      s.sub,
+                "exchange": s.exchange,
+                "category": s.category,
+            }
+            for s in search_symbols(q, "주식")
+            if category in ("전체", "주식")
+        ]
+
+    # 해외주식 + 암호화폐: symbols.py 사용
+    others = [
         {
             "ticker":   s.ticker,
             "name":     s.name,
@@ -37,8 +64,15 @@ async def search(q: str = "", category: str = "전체"):
             "exchange": s.exchange,
             "category": s.category,
         }
-        for s in results
+        for s in search_symbols(q, category)
+        if s.category != "주식"
     ]
+
+    if category == "주식":
+        return korean
+    if category in ("해외주식", "암호화폐"):
+        return others
+    return korean + others
 
 
 @router.get("/price/{ticker}")
