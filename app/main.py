@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import account, market, orders, strategy, ws, scheduler, devices
 from app.core.config import get_settings
 from app.core.dependencies import get_price_monitor, get_realtime_service, get_scheduler
+from app.kis import master as stock_master
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,6 +26,7 @@ async def lifespan(app: FastAPI):
     realtime.start()
     sched = get_scheduler()
     sched.start()
+    await stock_master.load_master()
     yield
     sched.shutdown()
     realtime.stop()
