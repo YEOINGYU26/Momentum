@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../core/app_colors.dart';
+import '../../models/chart_line_info.dart';
 
 // ─── Shared color palette ─────────────────────────────────────────────────────
 
@@ -147,12 +148,14 @@ const _panelIndicatorTypes = {
 class CandleChart extends StatefulWidget {
   final List<CandleData> candles;
   final void Function(CandleData?)? onCrosshair;
+  final void Function(List<ChartLineInfo>)? onLinesChanged;
   final String pricePrefix;
   final String ticker;
 
   const CandleChart({
     super.key, required this.candles,
-    this.onCrosshair, this.pricePrefix = '',
+    this.onCrosshair, this.onLinesChanged,
+    this.pricePrefix = '',
     this.ticker = '',
   });
 
@@ -236,6 +239,7 @@ class _CandleChartState extends State<CandleChart> {
       _selIdx = null; _selEndpoint = null;
       _phase = DrawPhase.idle; _tool = DrawTool.none;
       _cross = null; _crossCandle = null;
+      _notifyLinesChanged();
     }
   }
 
@@ -486,6 +490,7 @@ class _CandleChartState extends State<CandleChart> {
           _fpTime = null; _fpPrice = null; _cursor = null;
           _drawFinger = null; _drawCursorBase = null; _selIdx = null;
         });
+        _notifyLinesChanged();
       }
     }
   }
@@ -512,6 +517,7 @@ class _CandleChartState extends State<CandleChart> {
       _selLineOrig = _lines.last;
       _selDragOrigin = null;
     });
+    _notifyLinesChanged();
   }
 
   void _deleteSel() {
@@ -521,6 +527,18 @@ class _CandleChartState extends State<CandleChart> {
       _lines.removeAt(i); _selIdx = null; _selEndpoint = null;
       _phase = DrawPhase.idle; _tool = DrawTool.none;
     });
+    _notifyLinesChanged();
+  }
+
+  void _notifyLinesChanged() {
+    final infos = _lines.map((ln) => ChartLineInfo(
+      startPrice:  ln.startPrice,
+      endPrice:    ln.endPrice,
+      startTime:   ln.startTime,
+      endTime:     ln.endTime,
+      isHorizontal: ln.isHorizontal,
+    )).toList();
+    widget.onLinesChanged?.call(infos);
   }
 
   void _showCross(Offset pos) {

@@ -8,6 +8,7 @@ import 'providers/auth_provider.dart' as app_auth;
 import 'providers/price_provider.dart';
 import 'providers/balance_provider.dart';
 import 'providers/job_provider.dart';
+import 'providers/alert_provider.dart';
 import 'providers/chart_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/auth/login_screen.dart';
@@ -27,6 +28,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => PriceProvider()),
         ChangeNotifierProvider(create: (_) => BalanceProvider()),
         ChangeNotifierProvider(create: (_) => JobProvider()),
+        ChangeNotifierProvider(create: (_) => AlertProvider()),
         ChangeNotifierProvider(create: (_) => ChartProvider()),
       ],
       child: const TradingApp(),

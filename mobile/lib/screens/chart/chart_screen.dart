@@ -520,6 +520,8 @@ class _ChartScreenState extends State<ChartScreen> {
         pricePrefix: _pricePrefix,
         ticker: _currentTicker,
         onCrosshair: (_) {},
+        onLinesChanged: (lines) =>
+            context.read<ChartProvider>().setChartLines(lines),
       ),
     );
   }
