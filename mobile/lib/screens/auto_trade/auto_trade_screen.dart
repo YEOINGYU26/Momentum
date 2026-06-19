@@ -505,8 +505,7 @@ class _ConditionalTabState extends State<_ConditionalTab> {
           label: '매수',
           selected: _side == 'buy',
           color: AppColors.green,
-          onTap: () =>
-              setState(() { _side = 'buy'; _selectedLine = null; }),
+          onTap: () => setState(() => _side = 'buy'),
         )),
         const SizedBox(width: 8),
         Expanded(
@@ -514,8 +513,7 @@ class _ConditionalTabState extends State<_ConditionalTab> {
           label: '매도',
           selected: _side == 'sell',
           color: AppColors.red,
-          onTap: () =>
-              setState(() { _side = 'sell'; _selectedLine = null; }),
+          onTap: () => setState(() => _side = 'sell'),
         )),
       ],
     );
