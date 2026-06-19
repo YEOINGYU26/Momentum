@@ -32,16 +32,20 @@ class OrdersAPI:
     ) -> dict:
         """
         order_type:
-          "00" - 지정가
+          "00" - 지정가 (정규장 09:00~15:20)
           "01" - 시장가
+          "05" - 장전 시간외 단일가 (07:30~09:00)
+          "06" - 장후 시간외 단일가 (15:30~18:00)
         """
+        # 시장가("01")만 가격 0, 나머지는 지정가격 전달
+        unpr = "0" if order_type == "01" else str(price)
         payload = {
             "CANO": self._settings.kis_account_no,
             "ACNT_PRDT_CD": self._settings.kis_account_product_code,
             "PDNO": ticker,
             "ORD_DVSN": order_type,
             "ORD_QTY": str(quantity),
-            "ORD_UNPR": str(price) if order_type == "00" else "0",
+            "ORD_UNPR": unpr,
         }
         body = await self._client.post(
             "/uapi/domestic-stock/v1/trading/order-cash",
@@ -60,10 +64,28 @@ class OrdersAPI:
         }
 
     async def buy_limit(self, ticker: str, quantity: int, price: int) -> dict:
+        """정규장 지정가 매수"""
         return await self._place_order("buy", ticker, quantity, price, "00")
 
     async def sell_limit(self, ticker: str, quantity: int, price: int) -> dict:
+        """정규장 지정가 매도"""
         return await self._place_order("sell", ticker, quantity, price, "00")
+
+    async def buy_pre_market(self, ticker: str, quantity: int, price: int) -> dict:
+        """장전 시간외 단일가 매수 (07:30~09:00, ord_dvsn=05)"""
+        return await self._place_order("buy", ticker, quantity, price, "05")
+
+    async def sell_pre_market(self, ticker: str, quantity: int, price: int) -> dict:
+        """장전 시간외 단일가 매도 (07:30~09:00, ord_dvsn=05)"""
+        return await self._place_order("sell", ticker, quantity, price, "05")
+
+    async def buy_after_hours(self, ticker: str, quantity: int, price: int) -> dict:
+        """장후 시간외 단일가 매수 (15:30~18:00, ord_dvsn=06)"""
+        return await self._place_order("buy", ticker, quantity, price, "06")
+
+    async def sell_after_hours(self, ticker: str, quantity: int, price: int) -> dict:
+        """장후 시간외 단일가 매도 (15:30~18:00, ord_dvsn=06)"""
+        return await self._place_order("sell", ticker, quantity, price, "06")
 
     async def buy_market(self, ticker: str, quantity: int) -> dict:
         return await self._place_order("buy", ticker, quantity, 0, "01")
