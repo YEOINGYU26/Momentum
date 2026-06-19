@@ -504,7 +504,7 @@ class _ConditionalTabState extends State<_ConditionalTab> {
             child: _SideButton(
           label: '매수',
           selected: _side == 'buy',
-          color: AppColors.green,
+          color: AppColors.red,
           onTap: () => setState(() => _side = 'buy'),
         )),
         const SizedBox(width: 8),
@@ -512,7 +512,7 @@ class _ConditionalTabState extends State<_ConditionalTab> {
             child: _SideButton(
           label: '매도',
           selected: _side == 'sell',
-          color: AppColors.red,
+          color: AppColors.blue,
           onTap: () => setState(() => _side = 'sell'),
         )),
       ],
@@ -1121,11 +1121,11 @@ class _TickerGroupCard extends StatelessWidget {
                         const SizedBox(height: 2),
                         Row(children: [
                           if (buyCount > 0) ...[
-                            _MiniTag('매수 $buyCount', AppColors.green),
+                            _MiniTag('매수 $buyCount', AppColors.red),
                             const SizedBox(width: 4),
                           ],
                           if (sellCount > 0)
-                            _MiniTag('매도 $sellCount', AppColors.red),
+                            _MiniTag('매도 $sellCount', AppColors.blue),
                         ]),
                       ],
                     ),
@@ -1179,7 +1179,7 @@ class _AlertRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final a = alert;
-    final color = a.isBuy ? AppColors.green : AppColors.red;
+    final color = a.isBuy ? AppColors.red : AppColors.blue;
     final sideLabel = a.isBuy ? '매수' : '매도';
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final price = a.effectiveTargetAt(now);
@@ -1621,8 +1621,8 @@ class _ConditionalRegisterButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isBuy = side == 'buy';
-    final color = isBuy ? AppColors.green : AppColors.red;
-    final textColor = isBuy ? AppColors.bg : Colors.white;
+    final color = isBuy ? AppColors.red : AppColors.blue;
+    final textColor = Colors.white;
     final action = isBuy ? '매수 예약 등록' : '매도 예약 등록';
     final label = totalAmount != null
         ? '${_fmtNum(totalAmount!.toDouble())}원  $action'
