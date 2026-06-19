@@ -26,10 +26,18 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tab;
 
+  // 공유 종목 상태 (양쪽 탭이 동일 종목 사용)
+  SymbolInfo? _selectedSymbol;
+  String? _currentPrice;
+  final _searchCtrl = TextEditingController();
+  List<SymbolInfo> _suggestions = [];
+  Timer? _debounce;
+
   @override
   void initState() {
     super.initState();
     _tab = TabController(length: 2, vsync: this);
+    _searchCtrl.addListener(_onSearchChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<JobProvider>().fetchJobs();
       context.read<AlertProvider>().fetchAlerts();
@@ -39,25 +47,89 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
   @override
   void dispose() {
     _tab.dispose();
+    _searchCtrl.dispose();
+    _debounce?.cancel();
     super.dispose();
+  }
+
+  void _onSearchChanged() {
+    final q = _searchCtrl.text.trim();
+    if (q.isEmpty) {
+      setState(() => _suggestions = []);
+      return;
+    }
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 250), () async {
+      final results = await SymbolDatabase.searchAsync(q, '주식');
+      if (mounted) setState(() => _suggestions = results.take(6).toList());
+    });
+  }
+
+  void _selectSymbol(SymbolInfo s) {
+    _searchCtrl.clear();
+    setState(() {
+      _selectedSymbol = s;
+      _suggestions = [];
+      _currentPrice = null;
+    });
+    FocusScope.of(context).unfocus();
+    _fetchPrice(s.ticker);
+  }
+
+  Future<void> _fetchPrice(String ticker) async {
+    try {
+      final res = await http
+          .get(Uri.parse('$kBaseUrl/api/v1/market/price/$ticker'))
+          .timeout(const Duration(seconds: 4));
+      if (res.statusCode == 200) {
+        final o = jsonDecode(res.body) as Map<String, dynamic>;
+        final price = (o['current_price'] as num?)?.toDouble() ?? 0;
+        final rate  = (o['change_rate'] as num?)?.toDouble() ?? 0;
+        final sign  = o['change_sign'] as String? ?? '3';
+        final up    = sign == '1' || sign == '2';
+        if (mounted) {
+          setState(() {
+            _currentPrice =
+                '${_fmtNum(price)}  ${up ? '+' : ''}${rate.toStringAsFixed(2)}%';
+          });
+        }
+      }
+    } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(),
-            _buildTabBar(),
-            Expanded(
-              child: TabBarView(
-                controller: _tab,
-                children: const [_ConditionalTab(), _StrategyTab()],
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      behavior: HitTestBehavior.translucent,
+      child: Scaffold(
+        backgroundColor: AppColors.bg,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(),
+              _buildSearchBar(),
+              if (_suggestions.isNotEmpty) _buildSuggestions(),
+              if (_selectedSymbol != null && _suggestions.isEmpty)
+                _buildSymbolChip(),
+              _buildTabBar(),
+              Expanded(
+                child: TabBarView(
+                  controller: _tab,
+                  children: [
+                    _ConditionalTab(
+                      selected: _selectedSymbol,
+                      currentPrice: _currentPrice,
+                    ),
+                    _StrategyTab(
+                      selected: _selectedSymbol,
+                      currentPrice: _currentPrice,
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -65,18 +137,167 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
 
   Widget _buildHeader() {
     return const Padding(
-      padding: EdgeInsets.fromLTRB(20, 16, 20, 0),
-      child: Text('자동매매',
-          style: TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.bold)),
+      padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text('자동매매',
+            style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold)),
+      ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+      child: Container(
+        height: 42,
+        decoration: BoxDecoration(
+            color: AppColors.card, borderRadius: BorderRadius.circular(12)),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: Row(
+          children: [
+            const Icon(Icons.search, color: AppColors.gray, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _searchCtrl,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+                decoration: const InputDecoration(
+                  hintText: '종목명 또는 코드 검색...',
+                  hintStyle: TextStyle(color: AppColors.gray),
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
+                onSubmitted: (v) {
+                  if (_suggestions.isNotEmpty) _selectSymbol(_suggestions.first);
+                },
+              ),
+            ),
+            if (_suggestions.isNotEmpty || _searchCtrl.text.isNotEmpty)
+              GestureDetector(
+                onTap: () {
+                  _searchCtrl.clear();
+                  setState(() => _suggestions = []);
+                  FocusScope.of(context).unfocus();
+                },
+                child: const Icon(Icons.close, color: AppColors.gray, size: 18),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSuggestions() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: _suggestions.asMap().entries.map((entry) {
+          final i = entry.key;
+          final s = entry.value;
+          BorderRadius radius = BorderRadius.zero;
+          if (_suggestions.length == 1) {
+            radius = BorderRadius.circular(12);
+          } else if (i == 0) {
+            radius = const BorderRadius.vertical(top: Radius.circular(12));
+          } else if (i == _suggestions.length - 1) {
+            radius = const BorderRadius.vertical(bottom: Radius.circular(12));
+          }
+          return Column(
+            children: [
+              if (i > 0)
+                const Divider(
+                    height: 1,
+                    color: Color(0xFF252A34),
+                    indent: 16,
+                    endIndent: 16),
+              InkWell(
+                onTap: () => _selectSymbol(s),
+                borderRadius: radius,
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(s.name,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500)),
+                      ),
+                      Text(s.ticker,
+                          style: const TextStyle(
+                              color: AppColors.green,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildSymbolChip() {
+    final sym = _selectedSymbol!;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+      child: Row(
+        children: [
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.green.withValues(alpha: 0.4)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text(sym.ticker,
+                  style: const TextStyle(
+                      color: AppColors.green,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(width: 6),
+              Text(sym.name,
+                  style: const TextStyle(
+                      color: Colors.white70, fontSize: 12)),
+              if (_currentPrice != null) ...[
+                const SizedBox(width: 8),
+                Text(_currentPrice!,
+                    style: const TextStyle(
+                        color: AppColors.green, fontSize: 11)),
+              ],
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => setState(() {
+                  _selectedSymbol = null;
+                  _currentPrice = null;
+                }),
+                child: const Icon(Icons.close,
+                    color: AppColors.gray, size: 14),
+              ),
+            ]),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildTabBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
       child: Container(
         height: 40,
         decoration: BoxDecoration(
@@ -93,8 +314,8 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
           dividerColor: Colors.transparent,
           labelColor: AppColors.bg,
           unselectedLabelColor: AppColors.gray,
-          labelStyle: const TextStyle(
-              fontSize: 13, fontWeight: FontWeight.w600),
+          labelStyle:
+              const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
           tabs: const [
             Tab(text: '예약 매매'),
             Tab(text: '전략 자동매매'),
@@ -105,17 +326,401 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
   }
 }
 
-// ─── Tab 1: 전략 자동매매 ─────────────────────────────────────────────────────
+// ─── Tab 1: 예약 매매 ─────────────────────────────────────────────────────────
+
+class _ConditionalTab extends StatefulWidget {
+  final SymbolInfo? selected;
+  final String? currentPrice;
+  const _ConditionalTab({this.selected, this.currentPrice});
+  @override
+  State<_ConditionalTab> createState() => _ConditionalTabState();
+}
+
+class _ConditionalTabState extends State<_ConditionalTab> {
+  String _side = 'buy';
+  final _priceCtrl = TextEditingController();
+  int _quantity = 10;
+  bool _submitting = false;
+  ChartLineInfo? _selectedLine;
+
+  @override
+  void didUpdateWidget(_ConditionalTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selected?.ticker != widget.selected?.ticker) {
+      setState(() {
+        _selectedLine = null;
+        _priceCtrl.clear();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _priceCtrl.dispose();
+    super.dispose();
+  }
+
+  void _pickTrendline(BuildContext context) {
+    final ticker = widget.selected?.ticker;
+    if (ticker == null) {
+      _snack('종목을 먼저 선택하세요');
+      return;
+    }
+    final stockName = widget.selected?.name ?? ticker;
+    final allLines = context.read<ChartProvider>().getLinesForTicker(ticker);
+    final targetRole =
+        _side == 'buy' ? LineRole.buyTrigger : LineRole.sellTrigger;
+    final lines = allLines.where((l) => l.role == targetRole).toList();
+    if (allLines.isEmpty) {
+      _snack('$stockName 차트에서 추세선을 먼저 그려주세요');
+      return;
+    }
+    if (lines.isEmpty) {
+      _snack('$stockName 차트에 ${_side == 'buy' ? '매수선' : '매도선'}이 없습니다.\n'
+          '차트에서 추세선 역할을 지정해주세요.');
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => _TrendlinePickSheet(
+        lines: lines,
+        side: _side,
+        onPick: (line) {
+          Navigator.pop(context);
+          setState(() {
+            _selectedLine = line;
+            _priceCtrl.clear();
+          });
+        },
+      ),
+    );
+  }
+
+  void _clearTrendline() => setState(() => _selectedLine = null);
+
+  Future<void> _submit() async {
+    final s = widget.selected;
+    if (s == null) { _snack('종목을 선택하세요'); return; }
+
+    final line = _selectedLine;
+    final int targetPrice;
+    if (line != null) {
+      targetPrice = 0;
+    } else {
+      final parsed = int.tryParse(_priceCtrl.text.replaceAll(',', ''));
+      if (parsed == null || parsed <= 0) { _snack('목표 가격을 입력하세요'); return; }
+      targetPrice = parsed;
+    }
+
+    setState(() => _submitting = true);
+    try {
+      await context.read<AlertProvider>().addAlert(
+        ticker: s.ticker,
+        side: _side,
+        quantity: _quantity,
+        targetPrice: targetPrice,
+        lineStartTime:  line?.startTime,
+        lineStartPrice: line?.startPrice,
+        lineEndTime:    line?.endTime,
+        lineEndPrice:   line?.endPrice,
+      );
+      if (mounted) {
+        _snack('예약이 등록됐습니다', success: true);
+        _priceCtrl.clear();
+        setState(() => _selectedLine = null);
+      }
+    } catch (e) {
+      if (mounted) _snack(e.toString());
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  void _snack(String msg, {bool success = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: success ? AppColors.green : AppColors.red,
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final chartLines = widget.selected != null
+        ? context
+            .watch<ChartProvider>()
+            .getLinesForTicker(widget.selected!.ticker)
+        : const <ChartLineInfo>[];
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+      children: [
+        if (widget.selected == null)
+          _buildNoSymbolHint()
+        else ...[
+          _SectionLabel('방향'),
+          const SizedBox(height: 10),
+          _buildBuySellToggle(),
+          const SizedBox(height: 20),
+          _SectionLabel('목표 가격'),
+          const SizedBox(height: 10),
+          _buildPriceInput(context, chartLines),
+          const SizedBox(height: 20),
+          _SectionLabel('수량'),
+          const SizedBox(height: 10),
+          _buildQuantityRow(),
+          const SizedBox(height: 24),
+          _ConditionalRegisterButton(
+            side: _side,
+            loading: _submitting,
+            onTap: _submit,
+          ),
+        ],
+        const SizedBox(height: 28),
+        _SectionLabel('대기 중인 예약'),
+        const SizedBox(height: 12),
+        _PendingAlertsList(),
+      ],
+    );
+  }
+
+  Widget _buildNoSymbolHint() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+      margin: const EdgeInsets.only(bottom: 20),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.info_outline, color: AppColors.gray, size: 18),
+          SizedBox(width: 10),
+          Text('위 검색창에서 종목을 선택하세요',
+              style: TextStyle(color: AppColors.gray, fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBuySellToggle() {
+    return Row(
+      children: [
+        Expanded(
+            child: _SideButton(
+          label: '매수',
+          selected: _side == 'buy',
+          color: AppColors.green,
+          onTap: () =>
+              setState(() { _side = 'buy'; _selectedLine = null; }),
+        )),
+        const SizedBox(width: 8),
+        Expanded(
+            child: _SideButton(
+          label: '매도',
+          selected: _side == 'sell',
+          color: AppColors.red,
+          onTap: () =>
+              setState(() { _side = 'sell'; _selectedLine = null; }),
+        )),
+      ],
+    );
+  }
+
+  Widget _buildPriceInput(
+      BuildContext ctx, List<ChartLineInfo> chartLines) {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final line = _selectedLine;
+    final linePrice = line?.priceAt(now);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (line != null) ...[
+          Container(
+            width: double.infinity,
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF6C63FF).withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color:
+                      const Color(0xFF6C63FF).withValues(alpha: 0.5)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.timeline,
+                    color: Color(0xFF6C63FF), size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('추세선 적용됨',
+                          style: TextStyle(
+                              color: Color(0xFF6C63FF),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${line.label}  ·  현재 ${_fmtNum(linePrice!)}원',
+                        style: const TextStyle(
+                            color: AppColors.gray, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                GestureDetector(
+                  onTap: _clearTrendline,
+                  child: const Icon(Icons.close,
+                      color: AppColors.gray, size: 18),
+                ),
+              ],
+            ),
+          ),
+        ] else ...[
+          Container(
+            height: 52,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: AppColors.gray.withValues(alpha: 0.2)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _priceCtrl,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly
+                    ],
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold),
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      hintText: '0',
+                      hintStyle: TextStyle(
+                          color: AppColors.gray, fontSize: 18),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const Text('원',
+                    style:
+                        TextStyle(color: AppColors.gray, fontSize: 14)),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 8),
+        GestureDetector(
+          onTap: () => _pickTrendline(ctx),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color:
+                  const Color(0xFF6C63FF).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                  color:
+                      const Color(0xFF6C63FF).withValues(alpha: 0.4)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.timeline,
+                    color: Color(0xFF6C63FF), size: 16),
+                const SizedBox(width: 6),
+                Text(
+                  () {
+                    if (widget.selected == null) {
+                      return '종목 선택 후 추세선 불러오기';
+                    }
+                    final role = _side == 'buy'
+                        ? LineRole.buyTrigger
+                        : LineRole.sellTrigger;
+                    final matched =
+                        chartLines.where((l) => l.role == role).length;
+                    final roleName =
+                        _side == 'buy' ? '매수선' : '매도선';
+                    final name = widget.selected!.name;
+                    if (chartLines.isEmpty) return '$name 차트에 추세선 없음';
+                    if (matched == 0) return '$name 차트에 $roleName 없음';
+                    return '$name $roleName 불러오기 ($matched개)';
+                  }(),
+                  style: const TextStyle(
+                      color: Color(0xFF6C63FF),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildQuantityRow() {
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Text('수량',
+              style: TextStyle(color: AppColors.gray, fontSize: 13)),
+          const Spacer(),
+          _CounterButton(
+            icon: Icons.remove,
+            onTap: () {
+              if (_quantity > 1) setState(() => _quantity--);
+            },
+          ),
+          Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16),
+            child: Text('$_quantity주',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold)),
+          ),
+          _CounterButton(
+            icon: Icons.add,
+            onTap: () => setState(() => _quantity++),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Tab 2: 전략 자동매매 ─────────────────────────────────────────────────────
 
 class _StrategyTab extends StatefulWidget {
-  const _StrategyTab();
+  final SymbolInfo? selected;
+  final String? currentPrice;
+  const _StrategyTab({this.selected, this.currentPrice});
   @override
   State<_StrategyTab> createState() => _StrategyTabState();
 }
 
 class _StrategyTabState extends State<_StrategyTab> {
-  SymbolInfo? _selected;
-  String? _currentPrice;
   String _strategyId = 'rsi';
   int _quantity = 10;
   int _intervalSec = 60;
@@ -163,29 +768,8 @@ class _StrategyTabState extends State<_StrategyTab> {
     (label: '1시간', sec: 3600),
   ];
 
-  Future<void> _fetchPrice(String ticker) async {
-    try {
-      final res = await http
-          .get(Uri.parse('$kBaseUrl/api/v1/market/price/$ticker'))
-          .timeout(const Duration(seconds: 4));
-      if (res.statusCode == 200) {
-        final o = jsonDecode(res.body) as Map<String, dynamic>;
-        final price = (o['current_price'] as num?)?.toDouble() ?? 0;
-        final rate  = (o['change_rate'] as num?)?.toDouble() ?? 0;
-        final sign  = o['change_sign'] as String? ?? '3';
-        final up    = sign == '1' || sign == '2';
-        if (mounted) {
-          setState(() {
-            _currentPrice =
-                '${_fmtNum(price)}  ${up ? '+' : ''}${rate.toStringAsFixed(2)}%';
-          });
-        }
-      }
-    } catch (_) {}
-  }
-
   Future<void> _submit() async {
-    final s = _selected;
+    final s = widget.selected;
     if (s == null) {
       _snack('종목을 선택하세요');
       return;
@@ -220,40 +804,52 @@ class _StrategyTabState extends State<_StrategyTab> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
       children: [
-        _TickerPickerRow(
-          selected: _selected,
-          currentPrice: _currentPrice,
-          onPick: (s) {
-            setState(() { _selected = s; _currentPrice = null; });
-            _fetchPrice(s.ticker);
-          },
-        ),
-        const SizedBox(height: 20),
-        _SectionLabel('전략 선택'),
-        const SizedBox(height: 10),
-        _buildStrategyGrid(),
-        const SizedBox(height: 20),
-        _SectionLabel('데이터 주기'),
-        const SizedBox(height: 10),
-        _buildDataIntervalChips(),
-        const SizedBox(height: 20),
-        _SectionLabel('수량'),
-        const SizedBox(height: 10),
-        _buildQuantityRow(),
-        const SizedBox(height: 20),
-        _SectionLabel('실행 간격'),
-        const SizedBox(height: 10),
-        _buildIntervalChips(),
-        const SizedBox(height: 24),
-        _StartButton(
-          loading: _submitting,
-          onTap: _submit,
-        ),
+        if (widget.selected == null)
+          _buildNoSymbolHint()
+        else ...[
+          _SectionLabel('전략 선택'),
+          const SizedBox(height: 10),
+          _buildStrategyGrid(),
+          const SizedBox(height: 20),
+          _SectionLabel('데이터 주기'),
+          const SizedBox(height: 10),
+          _buildDataIntervalChips(),
+          const SizedBox(height: 20),
+          _SectionLabel('수량'),
+          const SizedBox(height: 10),
+          _buildQuantityRow(),
+          const SizedBox(height: 20),
+          _SectionLabel('실행 간격'),
+          const SizedBox(height: 10),
+          _buildIntervalChips(),
+          const SizedBox(height: 24),
+          _StartButton(loading: _submitting, onTap: _submit),
+        ],
         const SizedBox(height: 28),
         _SectionLabel('실행 중인 전략'),
         const SizedBox(height: 12),
         _RunningJobsList(),
       ],
+    );
+  }
+
+  Widget _buildNoSymbolHint() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+      margin: const EdgeInsets.only(bottom: 20),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.info_outline, color: AppColors.gray, size: 18),
+          SizedBox(width: 10),
+          Text('위 검색창에서 종목을 선택하세요',
+              style: TextStyle(color: AppColors.gray, fontSize: 13)),
+        ],
+      ),
     );
   }
 
@@ -277,9 +873,7 @@ class _StrategyTabState extends State<_StrategyTab> {
             duration: const Duration(milliseconds: 150),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: sel
-                  ? s.color.withValues(alpha: 0.15)
-                  : AppColors.card,
+              color: sel ? s.color.withValues(alpha: 0.15) : AppColors.card,
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
                 color: sel ? s.color : Colors.transparent,
@@ -324,7 +918,8 @@ class _StrategyTabState extends State<_StrategyTab> {
 
   Widget _buildQuantityRow() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(12),
@@ -336,7 +931,9 @@ class _StrategyTabState extends State<_StrategyTab> {
           const Spacer(),
           _CounterButton(
             icon: Icons.remove,
-            onTap: () { if (_quantity > 1) setState(() => _quantity--); },
+            onTap: () {
+              if (_quantity > 1) setState(() => _quantity--);
+            },
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -364,9 +961,12 @@ class _StrategyTabState extends State<_StrategyTab> {
           onTap: () => setState(() => _dataInterval = di.value),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: sel ? const Color(0xFF6C63FF) : AppColors.card,
+              color: sel
+                  ? const Color(0xFF6C63FF)
+                  : AppColors.card,
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
                 color: sel
@@ -394,7 +994,8 @@ class _StrategyTabState extends State<_StrategyTab> {
           onTap: () => setState(() => _intervalSec = iv.sec),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
               color: sel ? AppColors.green : AppColors.card,
               borderRadius: BorderRadius.circular(20),
@@ -414,631 +1015,15 @@ class _StrategyTabState extends State<_StrategyTab> {
   }
 }
 
-// ─── Tab 2: 예약 매매 ────────────────────────────────────────────────────────
-
-class _ConditionalTab extends StatefulWidget {
-  const _ConditionalTab();
-  @override
-  State<_ConditionalTab> createState() => _ConditionalTabState();
-}
-
-class _ConditionalTabState extends State<_ConditionalTab> {
-  SymbolInfo? _selected;
-  String? _currentPrice;
-  String _side = 'buy'; // 'buy' | 'sell'
-  final _priceCtrl = TextEditingController();
-  int _quantity = 10;
-  bool _submitting = false;
-  ChartLineInfo? _selectedLine; // 추세선 알람용
-
-  @override
-  void dispose() {
-    _priceCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _fetchPrice(String ticker) async {
-    try {
-      final res = await http
-          .get(Uri.parse('$kBaseUrl/api/v1/market/price/$ticker'))
-          .timeout(const Duration(seconds: 4));
-      if (res.statusCode == 200) {
-        final o = jsonDecode(res.body) as Map<String, dynamic>;
-        final price = (o['current_price'] as num?)?.toDouble() ?? 0;
-        final rate  = (o['change_rate'] as num?)?.toDouble() ?? 0;
-        final sign  = o['change_sign'] as String? ?? '3';
-        final up    = sign == '1' || sign == '2';
-        if (mounted) {
-          setState(() {
-            _currentPrice =
-                '${_fmtNum(price)}  ${up ? '+' : ''}${rate.toStringAsFixed(2)}%';
-          });
-        }
-      }
-    } catch (_) {}
-  }
-
-  void _pickTrendline(BuildContext context) {
-    final ticker = _selected?.ticker;
-    if (ticker == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('종목을 먼저 선택하세요'),
-        backgroundColor: AppColors.gray,
-        behavior: SnackBarBehavior.floating,
-      ));
-      return;
-    }
-    final stockName = _selected?.name ?? ticker;
-    final allLines = context.read<ChartProvider>().getLinesForTicker(ticker);
-    final targetRole = _side == 'buy' ? LineRole.buyTrigger : LineRole.sellTrigger;
-    final lines = allLines.where((l) => l.role == targetRole).toList();
-    if (allLines.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('$stockName 차트에서 추세선을 먼저 그려주세요'),
-        backgroundColor: AppColors.gray,
-        behavior: SnackBarBehavior.floating,
-      ));
-      return;
-    }
-    if (lines.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('$stockName 차트에 ${_side == 'buy' ? '매수선' : '매도선'}이 없습니다.\n차트에서 추세선 역할을 지정해주세요.'),
-        backgroundColor: AppColors.gray,
-        behavior: SnackBarBehavior.floating,
-      ));
-      return;
-    }
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.card,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => _TrendlinePickSheet(
-        lines: lines,
-        side: _side,
-        onPick: (line) {
-          Navigator.pop(context);
-          setState(() {
-            _selectedLine = line;
-            _priceCtrl.clear(); // 추세선 선택 시 수동 가격 초기화
-          });
-        },
-      ),
-    );
-  }
-
-  void _clearTrendline() => setState(() => _selectedLine = null);
-
-  Future<void> _submit() async {
-    final s = _selected;
-    if (s == null) { _snack('종목을 선택하세요'); return; }
-
-    final line = _selectedLine;
-    final int targetPrice;
-    if (line != null) {
-      targetPrice = 0; // 추세선 알람: 고정가 불필요
-    } else {
-      final parsed = int.tryParse(_priceCtrl.text.replaceAll(',', ''));
-      if (parsed == null || parsed <= 0) { _snack('목표 가격을 입력하세요'); return; }
-      targetPrice = parsed;
-    }
-
-    setState(() => _submitting = true);
-    try {
-      await context.read<AlertProvider>().addAlert(
-        ticker: s.ticker,
-        side: _side,
-        quantity: _quantity,
-        targetPrice: targetPrice,
-        lineStartTime:  line?.startTime,
-        lineStartPrice: line?.startPrice,
-        lineEndTime:    line?.endTime,
-        lineEndPrice:   line?.endPrice,
-      );
-      if (mounted) {
-        _snack('예약이 등록됐습니다', success: true);
-        _priceCtrl.clear();
-        setState(() => _selectedLine = null);
-      }
-    } catch (e) {
-      if (mounted) _snack(e.toString());
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
-  }
-
-  void _snack(String msg, {bool success = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor: success ? AppColors.green : AppColors.red,
-      behavior: SnackBarBehavior.floating,
-    ));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final chartLines = _selected != null
-        ? context.watch<ChartProvider>().getLinesForTicker(_selected!.ticker)
-        : const <ChartLineInfo>[];
-    return GestureDetector(
-      onTap: () => FocusScope.of(context).unfocus(),
-      behavior: HitTestBehavior.translucent,
-      child: ListView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-      children: [
-        _TickerPickerRow(
-          selected: _selected,
-          currentPrice: _currentPrice,
-          onPick: (s) {
-            setState(() { _selected = s; _currentPrice = null; });
-            _fetchPrice(s.ticker);
-          },
-        ),
-        const SizedBox(height: 20),
-        _SectionLabel('방향'),
-        const SizedBox(height: 10),
-        _buildBuySellToggle(),
-        const SizedBox(height: 20),
-        _SectionLabel('목표 가격'),
-        const SizedBox(height: 10),
-        _buildPriceInput(context, chartLines),
-        const SizedBox(height: 20),
-        _SectionLabel('수량'),
-        const SizedBox(height: 10),
-        _buildQuantityRow(),
-        const SizedBox(height: 24),
-        _ConditionalRegisterButton(
-          side: _side,
-          loading: _submitting,
-          onTap: _submit,
-        ),
-        const SizedBox(height: 28),
-        _SectionLabel('대기 중인 예약'),
-        const SizedBox(height: 12),
-        _PendingAlertsList(),
-      ],
-      ),
-    );
-  }
-
-  Widget _buildBuySellToggle() {
-    return Row(
-      children: [
-        Expanded(child: _SideButton(
-          label: '매수',
-          selected: _side == 'buy',
-          color: AppColors.green,
-          onTap: () => setState(() { _side = 'buy'; _selectedLine = null; }),
-        )),
-        const SizedBox(width: 8),
-        Expanded(child: _SideButton(
-          label: '매도',
-          selected: _side == 'sell',
-          color: AppColors.red,
-          onTap: () => setState(() { _side = 'sell'; _selectedLine = null; }),
-        )),
-      ],
-    );
-  }
-
-  Widget _buildPriceInput(BuildContext ctx, List<ChartLineInfo> chartLines) {
-    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final line = _selectedLine;
-    final linePrice = line?.priceAt(now);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // 추세선 적용 칩 (선택됐을 때)
-        if (line != null) ...[
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF6C63FF).withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                  color: const Color(0xFF6C63FF).withValues(alpha: 0.5)),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.timeline,
-                    color: Color(0xFF6C63FF), size: 18),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('추세선 적용됨',
-                          style: TextStyle(
-                              color: Color(0xFF6C63FF),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${line.label}  ·  현재 ${_fmtNum(linePrice!)}원',
-                        style: const TextStyle(
-                            color: AppColors.gray, fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
-                GestureDetector(
-                  onTap: _clearTrendline,
-                  child: const Icon(Icons.close,
-                      color: AppColors.gray, size: 18),
-                ),
-              ],
-            ),
-          ),
-        ] else ...[
-          // 수동 가격 입력
-          Container(
-            height: 52,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: AppColors.gray.withValues(alpha: 0.2),
-              ),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _priceCtrl,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold),
-                    decoration: const InputDecoration(
-                      border: InputBorder.none,
-                      hintText: '0',
-                      hintStyle:
-                          TextStyle(color: AppColors.gray, fontSize: 18),
-                      isDense: true,
-                    ),
-                  ),
-                ),
-                const Text('원',
-                    style: TextStyle(color: AppColors.gray, fontSize: 14)),
-              ],
-            ),
-          ),
-        ],
-        const SizedBox(height: 8),
-        // 추세선 불러오기 버튼
-        GestureDetector(
-          onTap: () => _pickTrendline(ctx),
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFF6C63FF).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                  color: const Color(0xFF6C63FF).withValues(alpha: 0.4)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.timeline,
-                    color: Color(0xFF6C63FF), size: 16),
-                const SizedBox(width: 6),
-                Text(
-                  _selected == null
-                      ? '종목 선택 후 추세선 불러오기'
-                      : () {
-                          final role = _side == 'buy' ? LineRole.buyTrigger : LineRole.sellTrigger;
-                          final matched = chartLines.where((l) => l.role == role).length;
-                          final roleName = _side == 'buy' ? '매수선' : '매도선';
-                          final name = _selected!.name;
-                          if (chartLines.isEmpty) return '$name 차트에 추세선 없음';
-                          if (matched == 0) return '$name 차트에 $roleName 없음';
-                          return '$name $roleName 불러오기 (${matched}개)';
-                        }(),
-                  style: const TextStyle(
-                      color: Color(0xFF6C63FF),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildQuantityRow() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          const Text('수량',
-              style: TextStyle(color: AppColors.gray, fontSize: 13)),
-          const Spacer(),
-          _CounterButton(
-            icon: Icons.remove,
-            onTap: () { if (_quantity > 1) setState(() => _quantity--); },
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text('$_quantity주',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold)),
-          ),
-          _CounterButton(
-            icon: Icons.add,
-            onTap: () => setState(() => _quantity++),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Shared Widgets ────────────────────────────────────────────────────────────
-
-class _TickerPickerRow extends StatelessWidget {
-  final SymbolInfo? selected;
-  final String? currentPrice;
-  final void Function(SymbolInfo) onPick;
-
-  const _TickerPickerRow({
-    required this.selected,
-    required this.currentPrice,
-    required this.onPick,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => _openSearch(context),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: selected != null
-                  ? AppColors.green.withValues(alpha: 0.4)
-                  : Colors.transparent),
-        ),
-        child: Row(
-          children: [
-            if (selected != null) ...[
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: AppColors.green.withValues(alpha: 0.15),
-                  shape: BoxShape.circle,
-                ),
-                child: Center(
-                  child: Text(
-                    selected!.ticker.length > 3
-                        ? selected!.ticker.substring(0, 3)
-                        : selected!.ticker,
-                    style: const TextStyle(
-                        color: AppColors.green,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(selected!.name,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold)),
-                    if (currentPrice != null)
-                      Text(currentPrice!,
-                          style: const TextStyle(
-                              color: AppColors.green, fontSize: 12))
-                    else
-                      Text(selected!.ticker,
-                          style: const TextStyle(
-                              color: AppColors.gray, fontSize: 12)),
-                  ],
-                ),
-              ),
-            ] else ...[
-              const Icon(Icons.search, color: AppColors.gray, size: 20),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: Text('종목 검색...',
-                    style: TextStyle(color: AppColors.gray, fontSize: 14)),
-              ),
-            ],
-            const Icon(Icons.keyboard_arrow_down,
-                color: AppColors.gray, size: 20),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _openSearch(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.bg,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => _TickerSearchSheet(onPick: onPick),
-    );
-  }
-}
-
-class _TickerSearchSheet extends StatefulWidget {
-  final void Function(SymbolInfo) onPick;
-  const _TickerSearchSheet({required this.onPick});
-
-  @override
-  State<_TickerSearchSheet> createState() => _TickerSearchSheetState();
-}
-
-class _TickerSearchSheetState extends State<_TickerSearchSheet> {
-  final _ctrl = TextEditingController();
-  List<SymbolInfo> _results = [];
-  bool _loading = false;
-  Timer? _debounce;
-
-  @override
-  void initState() {
-    super.initState();
-    _search('');
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    _debounce?.cancel();
-    super.dispose();
-  }
-
-  void _search(String q) {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () async {
-      setState(() => _loading = true);
-      final r = await SymbolDatabase.searchAsync(q, '주식');
-      if (mounted) setState(() { _results = r; _loading = false; });
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      initialChildSize: 0.75,
-      maxChildSize: 0.95,
-      minChildSize: 0.4,
-      expand: false,
-      builder: (_, sc) => Column(
-        children: [
-          Container(
-            margin: const EdgeInsets.symmetric(vertical: 8),
-            width: 36,
-            height: 4,
-            decoration: BoxDecoration(
-              color: AppColors.gray.withValues(alpha: 0.4),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-            child: Container(
-              height: 44,
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(22),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: Row(
-                children: [
-                  const Icon(Icons.search, color: AppColors.gray, size: 18),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: _ctrl,
-                      autofocus: true,
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 14),
-                      decoration: const InputDecoration(
-                        hintText: '종목명 또는 코드',
-                        hintStyle: TextStyle(color: AppColors.gray),
-                        border: InputBorder.none,
-                        isDense: true,
-                      ),
-                      onChanged: _search,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Expanded(
-            child: _loading
-                ? const Center(
-                    child: CircularProgressIndicator(
-                        color: AppColors.green, strokeWidth: 2))
-                : ListView.builder(
-                    controller: sc,
-                    itemCount: _results.length,
-                    itemBuilder: (_, i) {
-                      final s = _results[i];
-                      return ListTile(
-                        onTap: () {
-                          Navigator.pop(context);
-                          widget.onPick(s);
-                        },
-                        leading: Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: AppColors.card,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Center(
-                            child: Text(
-                              s.ticker.length > 4
-                                  ? s.ticker.substring(0, 4)
-                                  : s.ticker,
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                        ),
-                        title: Text(s.name,
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 14)),
-                        subtitle: Text(s.ticker,
-                            style: const TextStyle(
-                                color: AppColors.gray, fontSize: 11)),
-                        trailing: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppColors.card,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(s.exchange,
-                              style: const TextStyle(
-                                  color: AppColors.gray,
-                                  fontSize: 10)),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+// ─── Trendline Pick Sheet ──────────────────────────────────────────────────────
 
 class _TrendlinePickSheet extends StatelessWidget {
   final List<ChartLineInfo> lines;
   final String side;
   final void Function(ChartLineInfo line) onPick;
 
-  const _TrendlinePickSheet({required this.lines, required this.side, required this.onPick});
+  const _TrendlinePickSheet(
+      {required this.lines, required this.side, required this.onPick});
 
   @override
   Widget build(BuildContext context) {
@@ -1068,7 +1053,8 @@ class _TrendlinePickSheet extends StatelessWidget {
           child: Text(
             '선이 현재가와 만나는 순간 ${side == 'buy' ? '매수' : '매도'} 주문이 자동 실행됩니다.',
             style: TextStyle(
-                color: AppColors.gray.withValues(alpha: 0.8), fontSize: 11),
+                color: AppColors.gray.withValues(alpha: 0.8),
+                fontSize: 11),
           ),
         ),
         ListView.builder(
@@ -1078,8 +1064,9 @@ class _TrendlinePickSheet extends StatelessWidget {
           itemBuilder: (_, i) {
             final ln = lines[i];
             final price = ln.priceAt(now);
-            final hasRole = ln.role != LineRole.none;
-            final iconColor = hasRole ? ln.role.roleColor : const Color(0xFF6C63FF);
+            final iconColor = ln.role != LineRole.none
+                ? ln.role.roleColor
+                : const Color(0xFF6C63FF);
             return ListTile(
               onTap: () => onPick(ln),
               leading: Container(
@@ -1089,29 +1076,336 @@ class _TrendlinePickSheet extends StatelessWidget {
                   color: iconColor.withValues(alpha: 0.15),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(hasRole ? ln.role.icon : Icons.timeline,
-                    color: iconColor, size: 18),
+                child: Icon(
+                    ln.role != LineRole.none
+                        ? ln.role.icon
+                        : Icons.timeline,
+                    color: iconColor,
+                    size: 18),
               ),
-              title: Text(
-                '오늘 기준 ${_fmtNum(price)}원',
-                style: TextStyle(
-                  color: iconColor,
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              title: Text('오늘 기준 ${_fmtNum(price)}원',
+                  style: TextStyle(
+                      color: iconColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold)),
               subtitle: Text(
                 ln.isHorizontal
                     ? '수평 고정선 — 이 가격에 닿으면 ${side == 'buy' ? '매수' : '매도'}'
-                    : '시간에 따라 가격이 움직이는 추세선\n현재가가 이 가격에 닿으면 ${side == 'buy' ? '매수' : '매도'}',
-                style: const TextStyle(color: AppColors.gray, fontSize: 10, height: 1.4),
+                    : '추세선 — 시간에 따라 가격이 변동됨',
+                style: const TextStyle(
+                    color: AppColors.gray, fontSize: 10, height: 1.4),
               ),
-              isThreeLine: !ln.isHorizontal,
             );
           },
         ),
         const SizedBox(height: 16),
       ],
+    );
+  }
+}
+
+// ─── Pending Alerts List (종목별 그룹화) ──────────────────────────────────────
+
+class _PendingAlertsList extends StatefulWidget {
+  @override
+  State<_PendingAlertsList> createState() => _PendingAlertsListState();
+}
+
+class _PendingAlertsListState extends State<_PendingAlertsList> {
+  final Set<String> _expanded = {};
+  // 티커 코드 → 종목명 캐시
+  final Map<String, String> _names = {};
+
+  Future<String> _resolveName(String ticker) async {
+    if (_names.containsKey(ticker)) return _names[ticker]!;
+    final results = await SymbolDatabase.searchAsync(ticker, '주식');
+    final match = results.where((s) => s.ticker == ticker).toList();
+    final name = match.isNotEmpty ? match.first.name : ticker;
+    if (mounted) setState(() => _names[ticker] = name);
+    return name;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AlertProvider>(
+      builder: (_, provider, __) {
+        if (provider.loading) {
+          return const Center(
+              child: CircularProgressIndicator(
+                  color: AppColors.green, strokeWidth: 2));
+        }
+        if (provider.alerts.isEmpty) {
+          return _emptyState(Icons.notifications_none, '등록된 예약이 없습니다',
+              '위에서 예약을 추가하세요');
+        }
+
+        // 티커별 그룹화
+        final Map<String, List<PriceAlertModel>> grouped = {};
+        for (final a in provider.alerts) {
+          grouped.putIfAbsent(a.ticker, () => []).add(a);
+        }
+
+        return Column(
+          children: grouped.entries.map((entry) {
+            final ticker = entry.key;
+            final alerts = entry.value;
+            final isExpanded = _expanded.contains(ticker);
+            final name = _names[ticker] ?? ticker;
+            // 이름이 아직 없으면 비동기 로드
+            if (!_names.containsKey(ticker)) _resolveName(ticker);
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _TickerGroupCard(
+                ticker: ticker,
+                name: name,
+                alerts: alerts,
+                isExpanded: isExpanded,
+                onToggle: () => setState(() {
+                  if (isExpanded) { _expanded.remove(ticker); }
+                  else { _expanded.add(ticker); }
+                }),
+              ),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+}
+
+class _TickerGroupCard extends StatelessWidget {
+  final String ticker;
+  final String name;
+  final List<PriceAlertModel> alerts;
+  final bool isExpanded;
+  final VoidCallback onToggle;
+
+  const _TickerGroupCard({
+    required this.ticker,
+    required this.name,
+    required this.alerts,
+    required this.isExpanded,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final buyCount  = alerts.where((a) => a.isBuy).length;
+    final sellCount = alerts.where((a) => !a.isBuy).length;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        children: [
+          // ── 헤더 (항상 표시) ──
+          InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(14),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: AppColors.green.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        ticker.length > 3 ? ticker.substring(0, 3) : ticker,
+                        style: const TextStyle(
+                            color: AppColors.green,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(name,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 2),
+                        Row(children: [
+                          if (buyCount > 0) ...[
+                            _MiniTag('매수 $buyCount', AppColors.green),
+                            const SizedBox(width: 4),
+                          ],
+                          if (sellCount > 0)
+                            _MiniTag('매도 $sellCount', AppColors.red),
+                        ]),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    isExpanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    color: AppColors.gray,
+                    size: 20,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // ── 펼침 콘텐츠 ──
+          if (isExpanded) ...[
+            const Divider(height: 1, color: Color(0xFF252A34)),
+            ...alerts.map((a) => _AlertRow(alert: a)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniTag extends StatelessWidget {
+  final String text;
+  final Color color;
+  const _MiniTag(this.text, this.color);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(text,
+          style: TextStyle(
+              color: color, fontSize: 10, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+class _AlertRow extends StatelessWidget {
+  final PriceAlertModel alert;
+  const _AlertRow({required this.alert});
+
+  @override
+  Widget build(BuildContext context) {
+    final a = alert;
+    final color = a.isBuy ? AppColors.green : AppColors.red;
+    final sideLabel = a.isBuy ? '매수' : '매도';
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final price = a.effectiveTargetAt(now);
+
+    // 추세선 좌표와 현재 ChartProvider의 라인 비교 (불일치 경고)
+    final chartLines = context
+        .watch<ChartProvider>()
+        .getLinesForTicker(a.ticker);
+    final hasMismatch = a.isTrendline && !chartLines.any((l) =>
+        l.startTime == a.lineStartTime &&
+        l.endTime == a.lineEndTime &&
+        (l.startPrice - (a.lineStartPrice ?? 0)).abs() < 1);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      child: Row(
+        children: [
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(sideLabel,
+                style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Text('${_fmtNum(price)}원',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600)),
+                  if (a.isTrendline) ...[
+                    const SizedBox(width: 4),
+                    const Icon(Icons.timeline,
+                        color: Color(0xFF6C63FF), size: 12),
+                  ],
+                  if (hasMismatch) ...[
+                    const SizedBox(width: 4),
+                    const Tooltip(
+                      message: '차트의 추세선이 변경됐습니다.\n예약을 재등록하세요.',
+                      child: Icon(Icons.warning_amber_rounded,
+                          color: AppColors.yellow, size: 14),
+                    ),
+                  ],
+                ]),
+                Text('${a.quantity}주${a.triggered ? '  ✓ 체결됨' : ''}',
+                    style: TextStyle(
+                        color: a.triggered
+                            ? AppColors.green
+                            : AppColors.gray,
+                        fontSize: 10)),
+              ],
+            ),
+          ),
+          GestureDetector(
+            onTap: () => _confirmDelete(context),
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: AppColors.red.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(7),
+              ),
+              child: const Icon(Icons.close,
+                  color: AppColors.red, size: 14),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDelete(BuildContext context) {
+    final a = alert;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text('예약 삭제',
+            style: TextStyle(color: Colors.white)),
+        content: Text('${a.ticker} 종목의 모든 예약이 삭제됩니다.',
+            style: const TextStyle(color: AppColors.gray)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child:
+                const Text('취소', style: TextStyle(color: AppColors.gray)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              context.read<AlertProvider>().deleteAlert(a.ticker);
+            },
+            child: const Text('삭제',
+                style: TextStyle(color: AppColors.red)),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1133,10 +1427,12 @@ class _RunningJobsList extends StatelessWidget {
               Icons.auto_mode, '등록된 전략이 없습니다', '위에서 전략을 추가하세요');
         }
         return Column(
-          children: provider.jobs.map((j) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _JobCard(job: j),
-          )).toList(),
+          children: provider.jobs
+              .map((j) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _JobCard(job: j),
+                  ))
+              .toList(),
         );
       },
     );
@@ -1246,210 +1542,13 @@ class _JobCard extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('취소',
-                style: TextStyle(color: AppColors.gray)),
+            child:
+                const Text('취소', style: TextStyle(color: AppColors.gray)),
           ),
           TextButton(
             onPressed: () {
               Navigator.pop(context);
               provider.deleteJob(job.jobId);
-            },
-            child: const Text('삭제',
-                style: TextStyle(color: AppColors.red)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Pending Alerts List ──────────────────────────────────────────────────────
-
-class _PendingAlertsList extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Consumer<AlertProvider>(
-      builder: (_, provider, __) {
-        if (provider.loading) {
-          return const Center(
-              child: CircularProgressIndicator(
-                  color: AppColors.green, strokeWidth: 2));
-        }
-        if (provider.alerts.isEmpty) {
-          return _emptyState(
-              Icons.notifications_none, '등록된 예약이 없습니다', '위에서 예약을 추가하세요');
-        }
-        return Column(
-          children: provider.alerts.map((a) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _AlertCard(alert: a),
-          )).toList(),
-        );
-      },
-    );
-  }
-}
-
-class _AlertCard extends StatefulWidget {
-  final PriceAlertModel alert;
-  const _AlertCard({required this.alert});
-  @override
-  State<_AlertCard> createState() => _AlertCardState();
-}
-
-class _AlertCardState extends State<_AlertCard> {
-  String? _livePrice;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchLivePrice();
-  }
-
-  Future<void> _fetchLivePrice() async {
-    try {
-      final res = await http
-          .get(Uri.parse(
-              '$kBaseUrl/api/v1/market/price/${widget.alert.ticker}'))
-          .timeout(const Duration(seconds: 4));
-      if (res.statusCode == 200) {
-        final o = jsonDecode(res.body) as Map<String, dynamic>;
-        final price = (o['current_price'] as num?)?.toDouble() ?? 0;
-        if (mounted) setState(() => _livePrice = _fmtNum(price));
-      }
-    } catch (_) {}
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final a = widget.alert;
-    final color = a.isBuy ? AppColors.green : AppColors.red;
-    final sideLabel = a.isBuy ? '매수' : '매도';
-    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final effectiveTarget = a.effectiveTargetAt(now);
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(sideLabel,
-                    style: TextStyle(
-                        color: color,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold)),
-              ),
-              if (a.isTrendline) ...[
-                const SizedBox(width: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 6, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF6C63FF).withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.timeline,
-                          color: Color(0xFF6C63FF), size: 11),
-                      SizedBox(width: 3),
-                      Text('추세선',
-                          style: TextStyle(
-                              color: Color(0xFF6C63FF),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600)),
-                    ],
-                  ),
-                ),
-              ],
-              const Spacer(),
-              if (a.triggered)
-                const Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.check_circle,
-                      color: AppColors.green, size: 16),
-                ),
-              GestureDetector(
-                onTap: () => _confirmDelete(context),
-                child: Container(
-                  width: 30,
-                  height: 30,
-                  decoration: BoxDecoration(
-                    color: AppColors.red.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(Icons.close,
-                      color: AppColors.red, size: 16),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(a.ticker,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600)),
-          const SizedBox(height: 2),
-          Row(
-            children: [
-              Text(
-                a.isTrendline
-                    ? '추세선 목표 ${_fmtNum(effectiveTarget)}원'
-                    : '목표 ${_fmtNum(effectiveTarget)}원',
-                style: const TextStyle(color: AppColors.gray, fontSize: 11),
-              ),
-              if (_livePrice != null) ...[
-                const Text('  ·  ',
-                    style: TextStyle(color: AppColors.gray, fontSize: 11)),
-                Text('현재 $_livePrice원',
-                    style: const TextStyle(
-                        color: AppColors.gray, fontSize: 11)),
-              ],
-            ],
-          ),
-          Text('${a.quantity}주',
-              style: const TextStyle(color: AppColors.gray, fontSize: 11)),
-        ],
-      ),
-    );
-  }
-
-  void _confirmDelete(BuildContext context) {
-    final a = widget.alert;
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card,
-        title: const Text('예약 삭제',
-            style: TextStyle(color: Colors.white)),
-        content: Text('${a.ticker} 종목의 모든 예약이 삭제됩니다.',
-            style: const TextStyle(color: AppColors.gray)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소',
-                style: TextStyle(color: AppColors.gray)),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              context.read<AlertProvider>().deleteAlert(a.ticker);
             },
             child: const Text('삭제',
                 style: TextStyle(color: AppColors.red)),
@@ -1467,14 +1566,12 @@ class _SectionLabel extends StatelessWidget {
   const _SectionLabel(this.text);
 
   @override
-  Widget build(BuildContext context) => Text(
-        text,
-        style: const TextStyle(
-            color: AppColors.gray,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.4),
-      );
+  Widget build(BuildContext context) => Text(text,
+      style: const TextStyle(
+          color: AppColors.gray,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.4));
 }
 
 class _StatusBadge extends StatelessWidget {
@@ -1492,9 +1589,7 @@ class _StatusBadge extends StatelessWidget {
       ),
       child: Text(isPaused ? '일시정지' : '실행 중',
           style: TextStyle(
-              color: color,
-              fontSize: 10,
-              fontWeight: FontWeight.w600)),
+              color: color, fontSize: 10, fontWeight: FontWeight.w600)),
     );
   }
 }
@@ -1707,8 +1802,8 @@ Widget _emptyState(IconData icon, String title, String sub) {
                   fontWeight: FontWeight.w600)),
           const SizedBox(height: 4),
           Text(sub,
-              style: const TextStyle(
-                  color: AppColors.gray, fontSize: 12)),
+              style:
+                  const TextStyle(color: AppColors.gray, fontSize: 12)),
         ],
       ),
     ),
@@ -1734,6 +1829,8 @@ class _StrategyMeta {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 String _fmtNum(double v) {
-  return v.toStringAsFixed(0).replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},');
+  return v
+      .toStringAsFixed(0)
+      .replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+          (m) => '${m[1]},');
 }
