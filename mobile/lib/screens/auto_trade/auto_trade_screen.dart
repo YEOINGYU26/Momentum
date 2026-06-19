@@ -381,6 +381,12 @@ class _ConditionalTabState extends State<_ConditionalTab> {
   ChartLineInfo? _selectedLine;
 
   @override
+  void initState() {
+    super.initState();
+    _priceCtrl.addListener(() => setState(() {}));
+  }
+
+  @override
   void didUpdateWidget(_ConditionalTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.selected?.ticker != widget.selected?.ticker) {
@@ -513,6 +519,15 @@ class _ConditionalTabState extends State<_ConditionalTab> {
           _ConditionalRegisterButton(
             side: _side,
             loading: _submitting,
+            totalAmount: () {
+              final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+              if (_selectedLine != null) {
+                return (_selectedLine!.priceAt(now) * _quantity).round();
+              }
+              final parsed = int.tryParse(_priceCtrl.text.replaceAll(',', ''));
+              if (parsed != null && parsed > 0) return parsed * _quantity;
+              return null;
+            }(),
             onTap: _submit,
           ),
         ],
@@ -1768,15 +1783,20 @@ class _StartButton extends StatelessWidget {
 class _ConditionalRegisterButton extends StatelessWidget {
   final String side;
   final bool loading;
+  final int? totalAmount;
   final VoidCallback onTap;
   const _ConditionalRegisterButton(
-      {required this.side, required this.loading, required this.onTap});
+      {required this.side, required this.loading, required this.onTap, this.totalAmount});
 
   @override
   Widget build(BuildContext context) {
     final isBuy = side == 'buy';
     final color = isBuy ? AppColors.green : AppColors.red;
-    final label = isBuy ? '매수 예약 등록' : '매도 예약 등록';
+    final textColor = isBuy ? AppColors.bg : Colors.white;
+    final action = isBuy ? '매수 예약 등록' : '매도 예약 등록';
+    final label = totalAmount != null
+        ? '${_fmtNum(totalAmount!.toDouble())}원  $action'
+        : action;
     return GestureDetector(
       onTap: loading ? null : onTap,
       child: Container(
@@ -1790,26 +1810,10 @@ class _ConditionalRegisterButton extends StatelessWidget {
               ? SizedBox(
                   width: 20,
                   height: 20,
-                  child: CircularProgressIndicator(
-                      color: isBuy ? AppColors.bg : Colors.white,
-                      strokeWidth: 2))
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                        isBuy
-                            ? Icons.arrow_upward
-                            : Icons.arrow_downward,
-                        color: isBuy ? AppColors.bg : Colors.white,
-                        size: 18),
-                    const SizedBox(width: 6),
-                    Text(label,
-                        style: TextStyle(
-                            color: isBuy ? AppColors.bg : Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold)),
-                  ],
-                ),
+                  child: CircularProgressIndicator(color: textColor, strokeWidth: 2))
+              : Text(label,
+                  style: TextStyle(
+                      color: textColor, fontSize: 15, fontWeight: FontWeight.bold)),
         ),
       ),
     );
