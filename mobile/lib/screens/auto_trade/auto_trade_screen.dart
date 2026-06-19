@@ -54,7 +54,7 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
             Expanded(
               child: TabBarView(
                 controller: _tab,
-                children: const [_StrategyTab(), _ConditionalTab()],
+                children: const [_ConditionalTab(), _StrategyTab()],
               ),
             ),
           ],
@@ -96,8 +96,8 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
           labelStyle: const TextStyle(
               fontSize: 13, fontWeight: FontWeight.w600),
           tabs: const [
-            Tab(text: '전략 자동매매'),
             Tab(text: '조건부 매매'),
+            Tab(text: '전략 자동매매'),
           ],
         ),
       ),
@@ -608,14 +608,14 @@ class _ConditionalTabState extends State<_ConditionalTab> {
           label: '매수',
           selected: _side == 'buy',
           color: AppColors.green,
-          onTap: () => setState(() => _side = 'buy'),
+          onTap: () => setState(() { _side = 'buy'; _selectedLine = null; }),
         )),
         const SizedBox(width: 8),
         Expanded(child: _SideButton(
           label: '매도',
           selected: _side == 'sell',
           color: AppColors.red,
-          onTap: () => setState(() => _side = 'sell'),
+          onTap: () => setState(() { _side = 'sell'; _selectedLine = null; }),
         )),
       ],
     );
