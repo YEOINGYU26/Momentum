@@ -314,7 +314,7 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
                           color: AppColors.green, fontSize: 11)),
                 ],
                 const SizedBox(width: 8),
-                const Icon(Icons.bar_chart,
+                const Icon(Icons.candlestick_chart_outlined,
                     color: AppColors.green, size: 14),
               ]),
             ),
