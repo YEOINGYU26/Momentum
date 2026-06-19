@@ -96,7 +96,7 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
           labelStyle: const TextStyle(
               fontSize: 13, fontWeight: FontWeight.w600),
           tabs: const [
-            Tab(text: '조건부 매매'),
+            Tab(text: '예약 매매'),
             Tab(text: '전략 자동매매'),
           ],
         ),
@@ -414,7 +414,7 @@ class _StrategyTabState extends State<_StrategyTab> {
   }
 }
 
-// ─── Tab 2: 조건부 매매 ──────────────────────────────────────────────────────
+// ─── Tab 2: 예약 매매 ────────────────────────────────────────────────────────
 
 class _ConditionalTab extends StatefulWidget {
   const _ConditionalTab();
@@ -536,7 +536,7 @@ class _ConditionalTabState extends State<_ConditionalTab> {
         lineEndPrice:   line?.endPrice,
       );
       if (mounted) {
-        _snack('조건이 등록됐습니다', success: true);
+        _snack('예약이 등록됐습니다', success: true);
         _priceCtrl.clear();
         setState(() => _selectedLine = null);
       }
@@ -593,7 +593,7 @@ class _ConditionalTabState extends State<_ConditionalTab> {
           onTap: _submit,
         ),
         const SizedBox(height: 28),
-        _SectionLabel('대기 중인 조건'),
+        _SectionLabel('대기 중인 예약'),
         const SizedBox(height: 12),
         _PendingAlertsList(),
       ],
@@ -1277,7 +1277,7 @@ class _PendingAlertsList extends StatelessWidget {
         }
         if (provider.alerts.isEmpty) {
           return _emptyState(
-              Icons.notifications_none, '등록된 조건이 없습니다', '위에서 조건을 추가하세요');
+              Icons.notifications_none, '등록된 예약이 없습니다', '위에서 예약을 추가하세요');
         }
         return Column(
           children: provider.alerts.map((a) => Padding(
@@ -1436,9 +1436,9 @@ class _AlertCardState extends State<_AlertCard> {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: AppColors.card,
-        title: const Text('조건 삭제',
+        title: const Text('예약 삭제',
             style: TextStyle(color: Colors.white)),
-        content: Text('${a.ticker} 종목의 모든 조건이 삭제됩니다.',
+        content: Text('${a.ticker} 종목의 모든 예약이 삭제됩니다.',
             style: const TextStyle(color: AppColors.gray)),
         actions: [
           TextButton(
@@ -1644,7 +1644,7 @@ class _ConditionalRegisterButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final isBuy = side == 'buy';
     final color = isBuy ? AppColors.green : AppColors.red;
-    final label = isBuy ? '매수 조건 등록' : '매도 조건 등록';
+    final label = isBuy ? '매수 예약 등록' : '매도 예약 등록';
     return GestureDetector(
       onTap: loading ? null : onTap,
       child: Container(
