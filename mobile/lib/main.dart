@@ -29,7 +29,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => BalanceProvider()),
         ChangeNotifierProvider(create: (_) => JobProvider()),
         ChangeNotifierProvider(create: (_) => AlertProvider()),
-        ChangeNotifierProvider(create: (_) => ChartProvider()),
+        ChangeNotifierProvider(create: (_) => ChartProvider()..load()),
       ],
       child: const TradingApp(),
     ),

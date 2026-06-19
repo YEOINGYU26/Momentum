@@ -63,7 +63,28 @@ class ChartLineInfo {
 
   String get label {
     final roleStr = role != LineRole.none ? '[${role.label}] ' : '';
-    if (isHorizontal) return '${roleStr}수평선  ${startPrice.toStringAsFixed(0)}원';
-    return '${roleStr}추세선  ${startPrice.toStringAsFixed(0)} → ${endPrice.toStringAsFixed(0)}원';
+    if (isHorizontal) return '$roleStr수평선  ${startPrice.toStringAsFixed(0)}원';
+    return '$roleStr추세선  ${startPrice.toStringAsFixed(0)} → ${endPrice.toStringAsFixed(0)}원';
   }
+
+  Map<String, dynamic> toJson() => {
+    'startPrice': startPrice,
+    'endPrice': endPrice,
+    'startTime': startTime,
+    'endTime': endTime,
+    'isHorizontal': isHorizontal,
+    'role': role.name,
+  };
+
+  factory ChartLineInfo.fromJson(Map<String, dynamic> json) => ChartLineInfo(
+    startPrice: (json['startPrice'] as num).toDouble(),
+    endPrice: (json['endPrice'] as num).toDouble(),
+    startTime: json['startTime'] as int,
+    endTime: json['endTime'] as int,
+    isHorizontal: json['isHorizontal'] as bool? ?? false,
+    role: LineRole.values.firstWhere(
+      (r) => r.name == (json['role'] as String? ?? 'none'),
+      orElse: () => LineRole.none,
+    ),
+  );
 }
