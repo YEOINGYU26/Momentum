@@ -15,6 +15,7 @@ import '../../providers/chart_provider.dart';
 import '../../services/market_data_service.dart';
 import '../../main.dart';
 import '../home/mini_chart_sheet.dart';
+import 'expert_strategy_tab.dart';
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
@@ -39,7 +40,8 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 2, vsync: this);
+    _tab = TabController(length: 3, vsync: this);
+    _tab.addListener(() => setState(() {}));
     _searchCtrl.addListener(_onSearchChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<JobProvider>().fetchJobs();
@@ -139,10 +141,12 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
           child: Column(
             children: [
               _buildHeader(),
-              _buildSearchBar(),
-              if (_suggestions.isNotEmpty) _buildSuggestions(),
-              if (_selectedSymbol != null && _suggestions.isEmpty)
-                _buildSymbolChip(),
+              if (_tab.index < 2) ...[
+                _buildSearchBar(),
+                if (_suggestions.isNotEmpty) _buildSuggestions(),
+                if (_selectedSymbol != null && _suggestions.isEmpty)
+                  _buildSymbolChip(),
+              ],
               _buildTabBar(),
               Expanded(
                 child: TabBarView(
@@ -156,6 +160,7 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
                       selected: _selectedSymbol,
                       currentPrice: _currentPrice,
                     ),
+                    const ExpertStrategyTab(),
                   ],
                 ),
               ),
@@ -352,10 +357,11 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
           labelColor: AppColors.bg,
           unselectedLabelColor: AppColors.gray,
           labelStyle:
-              const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           tabs: const [
-            Tab(text: '예약 매매'),
-            Tab(text: '전략 자동매매'),
+            Tab(text: '지정가 매매'),
+            Tab(text: '조건 매매'),
+            Tab(text: '전문가 전략'),
           ],
         ),
       ),
