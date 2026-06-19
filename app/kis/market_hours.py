@@ -3,7 +3,7 @@
 
 정규장:         평일 09:00 ~ 15:20 (KST)  ord_dvsn="00"
 종가동시호가:   15:20 ~ 15:30              주문 불가
-장후 시간외:    15:30 ~ 18:00              ord_dvsn="06"
+장후 시간외:    15:30 ~ 16:00              ord_dvsn="06"  (시간외 단일가, 코스피/코스닥 공통)
 장전 시간외:    07:30 ~ 09:00              ord_dvsn="05"
 
 공휴일 처리: 기본 제외 목록 미포함 (KIS API가 해당 에러 반환 → 상위에서 처리)
@@ -25,7 +25,7 @@ def market_status(dt: Optional[datetime] = None) -> str:
     현재 장 상태 반환:
       open        정규장 (09:00 ~ 15:20)
       closing     종가동시호가 (15:20 ~ 15:30)  — 주문 불가
-      after_hours 장후 시간외 단일가 (15:30 ~ 18:00)  ord_dvsn="06"
+      after_hours 장후 시간외 단일가 (15:30 ~ 16:00)  ord_dvsn="06"
       pre_market  장전 시간외 단일가 (07:30 ~ 09:00)  ord_dvsn="05"
       closed      장 마감 / 주말
     """
@@ -39,7 +39,7 @@ def market_status(dt: Optional[datetime] = None) -> str:
         return "open"
     if time(15, 20) <= t < time(15, 30):
         return "closing"
-    if time(15, 30) <= t < time(18, 0):
+    if time(15, 30) <= t < time(16, 0):
         return "after_hours"
     return "closed"
 
@@ -50,7 +50,7 @@ def is_market_open(dt: Optional[datetime] = None) -> bool:
 
 
 def is_after_hours(dt: Optional[datetime] = None) -> bool:
-    """장후 시간외 단일가 여부 (15:30~18:00)"""
+    """장후 시간외 단일가 여부 (15:30~16:00)"""
     return market_status(dt) == "after_hours"
 
 
