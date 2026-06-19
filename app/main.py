@@ -8,6 +8,7 @@ from app.api.routes import account, market, orders, strategy, ws, scheduler, dev
 from app.core.config import get_settings
 from app.core.dependencies import get_price_monitor, get_realtime_service, get_scheduler
 from app.kis import master as stock_master
+from app.kis import us_master
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +28,7 @@ async def lifespan(app: FastAPI):
     sched = get_scheduler()
     sched.start()
     await stock_master.load_master()
+    await us_master.load_master()   # NASDAQ/NYSE/AMEX 해외주식 마스터
     yield
     sched.shutdown()
     realtime.stop()

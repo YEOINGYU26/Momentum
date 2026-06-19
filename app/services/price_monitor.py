@@ -6,7 +6,8 @@ from typing import Optional
 from app.kis.market import MarketAPI
 from app.kis.market_hours import market_status, is_us_market_open
 from app.kis.orders import OrdersAPI
-from app.data.symbols import is_us_ticker, get_us_exchange
+from app.data.symbols import is_us_ticker
+from app.kis import us_master
 from app.services.push import PushNotifier
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,7 @@ class PriceMonitorService:
             if is_us_ticker(alert.ticker):
                 # 해외주식 — USD, 소수점 2자리 반올림
                 order_price_f = round(target, 2)
-                exchange = get_us_exchange(alert.ticker)
+                exchange = us_master.lookup_exchange(alert.ticker)
                 logger.info("%s 도달 [US] — %s %s %d주 @ %.2f (목표 %.2f → 주문가 %.2f)",
                             kind, alert.side, alert.ticker, alert.quantity,
                             price, target, order_price_f)

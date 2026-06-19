@@ -1,7 +1,7 @@
 from datetime import date, datetime, time as dtime, timedelta
 
 from app.kis.client import KISClient
-from app.data.symbols import is_us_ticker, get_us_exchange
+from app.data.symbols import is_us_ticker
 
 
 class MarketAPI:
@@ -19,7 +19,8 @@ class MarketAPI:
     async def get_price(self, ticker: str) -> dict:
         """국내/해외주식 자동 감지 후 현재가 조회"""
         if is_us_ticker(ticker):
-            exchange = get_us_exchange(ticker)
+            from app.kis.us_master import lookup_exchange
+            exchange = lookup_exchange(ticker)
             return await self.get_us_price(ticker, exchange)
         return await self._get_kr_price(ticker)
 

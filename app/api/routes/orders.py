@@ -3,7 +3,8 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from app.core.dependencies import get_orders_api, get_price_monitor
-from app.data.symbols import is_us_ticker, get_us_exchange
+from app.data.symbols import is_us_ticker
+from app.kis import us_master
 from app.kis.orders import OrdersAPI
 from app.services.price_monitor import PriceAlert, PriceMonitorService
 
@@ -36,7 +37,7 @@ class AlertRequest(BaseModel):
 @router.post("/buy/limit")
 async def buy_limit(req: OrderRequest, api: OrdersAPI = Depends(get_orders_api)):
     if is_us_ticker(req.ticker):
-        exchange = get_us_exchange(req.ticker)
+        exchange = us_master.lookup_exchange(req.ticker)
         return await api.buy_us_limit(req.ticker, req.quantity, req.price, exchange)
     return await api.buy_limit(req.ticker, req.quantity, int(req.price))
 
@@ -44,7 +45,7 @@ async def buy_limit(req: OrderRequest, api: OrdersAPI = Depends(get_orders_api))
 @router.post("/sell/limit")
 async def sell_limit(req: OrderRequest, api: OrdersAPI = Depends(get_orders_api)):
     if is_us_ticker(req.ticker):
-        exchange = get_us_exchange(req.ticker)
+        exchange = us_master.lookup_exchange(req.ticker)
         return await api.sell_us_limit(req.ticker, req.quantity, req.price, exchange)
     return await api.sell_limit(req.ticker, req.quantity, int(req.price))
 
@@ -52,7 +53,7 @@ async def sell_limit(req: OrderRequest, api: OrdersAPI = Depends(get_orders_api)
 @router.post("/buy/market")
 async def buy_market(req: MarketOrderRequest, api: OrdersAPI = Depends(get_orders_api)):
     if is_us_ticker(req.ticker):
-        exchange = get_us_exchange(req.ticker)
+        exchange = us_master.lookup_exchange(req.ticker)
         return await api.buy_us_market(req.ticker, req.quantity, exchange)
     return await api.buy_market(req.ticker, req.quantity)
 
@@ -60,7 +61,7 @@ async def buy_market(req: MarketOrderRequest, api: OrdersAPI = Depends(get_order
 @router.post("/sell/market")
 async def sell_market(req: MarketOrderRequest, api: OrdersAPI = Depends(get_orders_api)):
     if is_us_ticker(req.ticker):
-        exchange = get_us_exchange(req.ticker)
+        exchange = us_master.lookup_exchange(req.ticker)
         return await api.sell_us_market(req.ticker, req.quantity, exchange)
     return await api.sell_market(req.ticker, req.quantity)
 

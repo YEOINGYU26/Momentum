@@ -5,8 +5,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 
 from app.core.dependencies import get_market_api
-from app.data.symbols import search_symbols, is_us_ticker, get_us_exchange
+from app.data.symbols import search_symbols, is_us_ticker
 from app.kis import master as stock_master
+from app.kis import us_master
 from app.kis.market import MarketAPI
 
 router = APIRouter(prefix="/market", tags=["market"])
@@ -84,24 +85,53 @@ async def search(q: str = "", category: str = "전체"):
             if category in ("전체", "주식")
         ]
 
-    # 해외주식 + 암호화폐: symbols.py 사용
-    others = [
-        {
-            "ticker":   s.ticker,
-            "name":     s.name,
-            "sub":      s.sub,
-            "exchange": s.exchange,
-            "category": s.category,
-        }
-        for s in search_symbols(q, category)
-        if s.category != "주식"
-    ]
+    # 해외주식: 마스터 캐시 우선(수만 종목), 미로드 시 symbols.py 폴백
+    us_results: list[dict] = []
+    if category in ("전체", "해외주식"):
+        if us_master.is_loaded():
+            us_results = [
+                {
+                    "ticker":   it.ticker,
+                    "name":     it.name,
+                    "sub":      it.name,
+                    "exchange": it.exchange,
+                    "category": "해외주식",
+                }
+                for it in us_master.search(q, limit=50)
+            ]
+        else:
+            us_results = [
+                {
+                    "ticker":   s.ticker,
+                    "name":     s.name,
+                    "sub":      s.sub,
+                    "exchange": s.exchange,
+                    "category": s.category,
+                }
+                for s in search_symbols(q, "해외주식")
+            ]
+
+    # 암호화폐: symbols.py 사용
+    crypto_results: list[dict] = []
+    if category in ("전체", "암호화폐"):
+        crypto_results = [
+            {
+                "ticker":   s.ticker,
+                "name":     s.name,
+                "sub":      s.sub,
+                "exchange": s.exchange,
+                "category": s.category,
+            }
+            for s in search_symbols(q, "암호화폐")
+        ]
 
     if category == "주식":
         return korean
-    if category in ("해외주식", "암호화폐"):
-        return others
-    return korean + others
+    if category == "해외주식":
+        return us_results
+    if category == "암호화폐":
+        return crypto_results
+    return korean + us_results + crypto_results
 
 
 @router.get("/price/{ticker}")
@@ -124,7 +154,7 @@ async def get_ohlcv(
     try:
         if is_us_ticker(ticker):
             # ── 해외주식 OHLCV ──────────────────────────────────────────
-            exchange = get_us_exchange(ticker)
+            exchange = us_master.lookup_exchange(ticker)
             if interval == "all":
                 result = await api.get_us_ohlcv_all(ticker, exchange, "0", max_pages=100)
             elif interval == "1y":
