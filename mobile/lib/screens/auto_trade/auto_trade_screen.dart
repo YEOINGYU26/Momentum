@@ -13,6 +13,8 @@ import '../../providers/job_provider.dart';
 import '../../providers/alert_provider.dart';
 import '../../providers/chart_provider.dart';
 import '../../services/market_data_service.dart';
+import '../../main.dart';
+import '../home/mini_chart_sheet.dart';
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
@@ -29,6 +31,7 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
   // 공유 종목 상태 (양쪽 탭이 동일 종목 사용)
   SymbolInfo? _selectedSymbol;
   String? _currentPrice;
+  bool _isUp = false;
   final _searchCtrl = TextEditingController();
   List<SymbolInfo> _suggestions = [];
   Timer? _debounce;
@@ -76,6 +79,33 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
     _fetchPrice(s.ticker);
   }
 
+  void _openMiniChart() {
+    final sym = _selectedSymbol;
+    if (sym == null) return;
+    final parts = _currentPrice?.split('  ') ?? [];
+    final priceStr = parts.isNotEmpty ? parts[0] : '';
+    final pctStr   = parts.length > 1 ? parts[1] : '';
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => ChangeNotifierProvider.value(
+        value: context.read<ChartProvider>(),
+        child: MiniChartSheet(
+          ticker: sym.ticker,
+          name: sym.name,
+          price: priceStr,
+          pct: pctStr,
+          isUp: _isUp,
+          onGoToChart: () {
+            context.read<ChartProvider>().setTicker(sym.ticker);
+            MainScaffold.goToChart();
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _fetchPrice(String ticker) async {
     try {
       final res = await http
@@ -89,6 +119,7 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
         final up    = sign == '1' || sign == '2';
         if (mounted) {
           setState(() {
+            _isUp = up;
             _currentPrice =
                 '${_fmtNum(price)}  ${up ? '+' : ''}${rate.toStringAsFixed(2)}%';
           });
@@ -255,40 +286,46 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
       child: Row(
         children: [
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.green.withValues(alpha: 0.4)),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text(sym.ticker,
-                  style: const TextStyle(
-                      color: AppColors.green,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold)),
-              const SizedBox(width: 6),
-              Text(sym.name,
-                  style: const TextStyle(
-                      color: Colors.white70, fontSize: 12)),
-              if (_currentPrice != null) ...[
-                const SizedBox(width: 8),
-                Text(_currentPrice!,
-                    style: const TextStyle(
-                        color: AppColors.green, fontSize: 11)),
-              ],
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () => setState(() {
-                  _selectedSymbol = null;
-                  _currentPrice = null;
-                }),
-                child: const Icon(Icons.close,
-                    color: AppColors.gray, size: 14),
+          GestureDetector(
+            onTap: _openMiniChart,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(8),
+                border:
+                    Border.all(color: AppColors.green.withValues(alpha: 0.4)),
               ),
-            ]),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(sym.ticker,
+                    style: const TextStyle(
+                        color: AppColors.green,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(width: 6),
+                Text(sym.name,
+                    style:
+                        const TextStyle(color: Colors.white70, fontSize: 12)),
+                if (_currentPrice != null) ...[
+                  const SizedBox(width: 8),
+                  Text(_currentPrice!,
+                      style: const TextStyle(
+                          color: AppColors.green, fontSize: 11)),
+                ],
+                const SizedBox(width: 8),
+                const Icon(Icons.bar_chart,
+                    color: AppColors.green, size: 14),
+              ]),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: () => setState(() {
+              _selectedSymbol = null;
+              _currentPrice = null;
+            }),
+            child: const Icon(Icons.close, color: AppColors.gray, size: 18),
           ),
         ],
       ),
