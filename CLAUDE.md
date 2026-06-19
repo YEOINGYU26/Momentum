@@ -13,6 +13,10 @@
 
 ## 규칙
 - 작업 완료 시 항상 Git 커밋할 것
+- **작업 시작 전 반드시 feature 브랜치 생성 — main에 직접 커밋 금지**
+  - 브랜치 네이밍: `feat/<기능명>`, `fix/<버그명>`, `chore/<작업명>`
+  - 작업 완료 후 `git push -u origin <브랜치명>` → PR 생성
+  - PR merge 전까지 main 브랜치에 체크아웃하지 말 것
 - 커밋 메시지는 한국어로 작성
 - Jira 이슈 번호 포함할 것 (예: KAN-1)
 - 작업 완료 시 해당 Jira 이슈를 "완료"로 전환할 것 (`mcp__atlassian__transitionJiraIssue`, transition id: `"41"`)
@@ -264,9 +268,12 @@ mobile/assets/
 
 ## Jira 문서
 - **KAN-17**: 구현 기능 명세서 — 전체 완성 기능 목록, 버그 수정 이력, 미완료 작업 정리
-- **KAN-18**: 오늘(2026-06-18) 작업 내용 정리
-- **KAN-19**: 추세선 SharedPreferences 영구 저장 (다음 작업)
-- **KAN-20**: 매매선 역할별 백엔드 연동 (다음 작업)
+- **KAN-18**: 2026-06-18 작업 내용 정리 (완료)
+- **KAN-19**: 추세선 SharedPreferences 영구 저장 (미완료)
+- **KAN-20**: 매매선 역할별 백엔드 연동 (미완료)
+- **KAN-21**: KIS 해외주식(미장) API 연동 (완료)
+- **KAN-22**: 차트 그리기 도구 피커 + 15종 드로잉 툴 (완료)
+- **KAN-23**: 2026-06-18~19 작업 내용 정리
 
 ## 매매선 (LineRole) 구조 (KAN-18, 완료)
 
@@ -332,3 +339,76 @@ List<ChartLineInfo> getLinesForTicker(String t) =>
 - 기존: `clamp(0, vis.length - 1)` → 미래 슬롯 접근 불가
 - 수정: `totalSlots = vis.length + r.futureSlots` 사용
 - `isFuture` 판별: `slot >= vis.length` → `_crossCandle = null` (OHLCV 표시 없음)
+
+## KIS 해외주식(미장) API 연동 (KAN-21, 완료)
+
+### 백엔드
+- `app/kis/market.py`: `get_us_price()` — tr_id `HHDFS00000300`, `get_us_ohlcv_all()` — `HHDFS76240000`
+- `app/kis/orders.py`: `buy_us_limit/sell_us_limit` — tr_id `TTTT1002U`/`TTTT1006U` (실거래), `VTTT1002U`/`VTTT1001U` (모의)
+- `app/kis/us_master.py`: NASDAQ/NYSE/AMEX 마스터 파일 로더 — 전 종목 거래소 코드 자동 조회
+  - 서버 시작 시 KIS에서 `.mst.gz` 파일 다운로드 후 인메모리 파싱
+  - `lookup_exchange(ticker)` — 종목별 거래소 코드(`NAS`/`NYS`/`AMS`) 반환
+- `app/data/symbols.py`: `is_us_ticker(ticker)` — 순수 영문자 여부로 국내/해외 판별
+- 주문/알림 API는 `is_us_ticker()` 분기로 국내/해외 자동 라우팅
+- USD 가격: 소수점 2자리 반올림 (호가 단위 없음)
+
+### Flutter
+- `MarketDataService`: `is_us_ticker()` 동일 로직, 해외 종목 시 USD 가격 포맷 적용
+- 왓치리스트/차트 화면: 국내(원)/해외(달러) 표시 자동 전환
+
+## 차트 그리기 도구 피커 (KAN-22, 완료)
+
+### DrawTool enum (15종)
+```dart
+enum DrawTool {
+  none,
+  trendLine, crossLine, parallelChannel,
+  fibRetracement, fibExtension, fibTimeZone,
+  headAndShoulders, elliottWave, xabcdPattern,
+  longPosition, shortPosition,
+  brush, text, note, priceNote,
+}
+```
+
+### pointCount 규칙
+| 도구 | 점 수 |
+|------|-------|
+| crossLine, text/note/priceNote | 1 |
+| trendLine, fibRetracement, fibTimeZone, longPosition, shortPosition | 2 |
+| parallelChannel, fibExtension | 3 |
+| headAndShoulders, xabcdPattern | 5 |
+| elliottWave | 6 |
+| brush | -1 (드래그) |
+
+### 상태머신 (DrawPhase 확장)
+- `idle` → 피커 버튼 → `_DrawingPickerSheet` 열림 → 도구 선택
+- `idle` → 도구 활성화 → `placingFirst`
+- `placingFirst` → 탭 → `placingSecond`
+- `placingSecond` → 탭 → (2점 도구) 완성 / (N점 도구) `placingMore`
+- `placingMore` → 탭 → 점 추가, 목표 수 도달 시 완성
+- brush: 드래그 시작 → `placingMore`, 드래그 종료 → 완성
+
+### ChartLine 확장 필드
+```dart
+final DrawTool drawType;      // 도구 타입 (기본: DrawTool.trendLine)
+final List<DrawingPoint> pts; // 모든 앵커 포인트 (multi-point)
+final String? text;           // text/note/priceNote 텍스트
+```
+
+### DrawingPoint
+```dart
+class DrawingPoint {
+  final int time;     // Unix sec (캔들 타임스탬프)
+  final double price; // 가격
+}
+```
+
+### 피커 UI (_DrawingPickerSheet)
+- `DraggableScrollableSheet` + `TabBar` (6 카테고리)
+- 카테고리: 라인, 피보나치, 패턴, 포지션, 브러시, 텍스트
+- 3열 `GridView` — 아이콘 + 도구명 표시
+- 버그 주의: `TabBarView` 안 GridView에 공유 ScrollController 붙이면 crash → builder 파라미터로만 사용
+
+### _notifyLinesChanged 필터링
+- ChartProvider에 전달하는 라인은 `drawType == trendLine || isHorizontal` 만 포함
+- 나머지 드로잉 도구 라인은 캔들차트 세션 내 로컬 상태로만 관리 (SharedPreferences 저장 대상 아님)
