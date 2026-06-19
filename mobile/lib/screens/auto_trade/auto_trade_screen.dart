@@ -7,7 +7,6 @@ import 'package:http/http.dart' as http;
 import '../../core/app_colors.dart';
 import '../../core/constants.dart';
 import '../../models/price_alert_model.dart';
-import '../../models/chart_line_info.dart';
 import '../../models/scheduler_job.dart';
 import '../../providers/job_provider.dart';
 import '../../providers/alert_provider.dart';
