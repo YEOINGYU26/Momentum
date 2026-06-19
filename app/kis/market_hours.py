@@ -1,10 +1,15 @@
 """
-한국 주식시장(KRX) 거래시간 유틸리티
+한국/미국 주식시장 거래시간 유틸리티
 
+[한국 KRX]
 정규장:         평일 09:00 ~ 15:20 (KST)  ord_dvsn="00"
 종가동시호가:   15:20 ~ 15:30              주문 불가
 장후 시간외:    15:30 ~ 16:00              ord_dvsn="06"  (시간외 단일가, 코스피/코스닥 공통)
 장전 시간외:    07:30 ~ 09:00              ord_dvsn="05"
+
+[미국 NYSE/NASDAQ]
+정규장:         평일 09:30 ~ 16:00 (ET = US/Eastern, 섬머타임 자동 반영)
+KST 기준:       EDT (3월~11월) 22:30~05:00 / EST (11월~3월) 23:30~06:00
 
 공휴일 처리: 기본 제외 목록 미포함 (KIS API가 해당 에러 반환 → 상위에서 처리)
 """
@@ -14,6 +19,7 @@ from typing import Optional
 import pytz
 
 KST = pytz.timezone("Asia/Seoul")
+ET  = pytz.timezone("US/Eastern")
 
 
 def now_kst() -> datetime:
@@ -62,3 +68,34 @@ def is_pre_market(dt: Optional[datetime] = None) -> bool:
 def is_tradeable(dt: Optional[datetime] = None) -> bool:
     """주문 가능 시간 여부 (정규장 + 장전/장후 시간외)"""
     return market_status(dt) in ("open", "pre_market", "after_hours")
+
+
+# ── 미국 시장 (NYSE / NASDAQ) ─────────────────────────────────────────────────
+
+def now_et() -> datetime:
+    return datetime.now(ET)
+
+
+def us_market_status(dt: Optional[datetime] = None) -> str:
+    """
+    미국 시장 상태 반환 (US/Eastern 기준, 섬머타임 자동 반영):
+      open   정규장 09:30 ~ 16:00 ET
+      closed 그 외 (프리마켓/애프터마켓 미지원)
+    """
+    now = dt or now_et()
+    # 타임존 없는 dt는 ET로 간주
+    if now.tzinfo is None:
+        now = ET.localize(now)
+    else:
+        now = now.astimezone(ET)
+    if now.weekday() >= 5:
+        return "closed"
+    t = now.time()
+    if time(9, 30) <= t < time(16, 0):
+        return "open"
+    return "closed"
+
+
+def is_us_market_open(dt: Optional[datetime] = None) -> bool:
+    """미국 정규장 여부"""
+    return us_market_status(dt) == "open"

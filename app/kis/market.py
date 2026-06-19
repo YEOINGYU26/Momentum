@@ -1,17 +1,29 @@
 from datetime import date, datetime, time as dtime, timedelta
 
 from app.kis.client import KISClient
+from app.data.symbols import is_us_ticker, get_us_exchange
 
 
 class MarketAPI:
+    # 국내주식 tr_id
     _TR_PRICE = "FHKST01010100"
     _TR_DAILY_CHART = "FHKST03010100"
     _TR_MINUTE_CHART = "FHKST03010200"
+    # 해외주식 tr_id (모의/실거래 공통)
+    _TR_US_PRICE = "HHDFS00000300"
+    _TR_US_DAILY = "HHDFS76240000"
 
     def __init__(self, client: KISClient):
         self._client = client
 
     async def get_price(self, ticker: str) -> dict:
+        """국내/해외주식 자동 감지 후 현재가 조회"""
+        if is_us_ticker(ticker):
+            exchange = get_us_exchange(ticker)
+            return await self.get_us_price(ticker, exchange)
+        return await self._get_kr_price(ticker)
+
+    async def _get_kr_price(self, ticker: str) -> dict:
         params = {
             "fid_cond_mrkt_div_code": "J",
             "fid_input_iscd": ticker,
@@ -36,7 +48,131 @@ class MarketAPI:
             "change": change,
             "change_sign": sign,   # 1=상한 2=상승 3=보합 4=하락 5=하한
             "change_rate": (-1 if is_down else 1) * float(output.get("prdy_ctrt", 0) or 0),
+            "currency": "KRW",
         }
+
+    async def get_us_price(self, ticker: str, exchange: str) -> dict:
+        """KIS 해외주식 현재가 (tr_id: HHDFS00000300)"""
+        params = {
+            "AUTH": "",
+            "EXCD": exchange,
+            "SYMB": ticker,
+        }
+        body = await self._client.get(
+            "/uapi/overseas-price/v1/quotations/price",
+            self._TR_US_PRICE,
+            params,
+        )
+        output = body.get("output", {})
+        sign = output.get("sign", "3")
+        is_down = sign in ("4", "5")
+
+        def _f(key: str, default: float = 0.0) -> float:
+            try:
+                return float(output.get(key) or default)
+            except (ValueError, TypeError):
+                return default
+
+        diff = _f("diff")
+        if is_down:
+            diff = -abs(diff)
+
+        return {
+            "ticker": ticker,
+            "current_price": _f("last"),
+            "open_price":    _f("open"),
+            "high_price":    _f("high"),
+            "low_price":     _f("low"),
+            "volume":        int(output.get("pvol", 0) or 0),
+            "change":        diff,
+            "change_sign":   sign,
+            "change_rate":   (-1 if is_down else 1) * _f("rate"),
+            "currency":      "USD",
+            "exchange":      exchange,
+        }
+
+    async def get_us_ohlcv_all(
+        self,
+        ticker: str,
+        exchange: str,
+        gubn: str = "0",       # "0"=일봉, "1"=주봉, "2"=월봉
+        max_pages: int = 15,
+    ) -> list[dict]:
+        """KIS 해외주식 OHLCV (tr_id: HHDFS76240000), BYMD 기준 페이지네이션"""
+        all_rows: list = []
+        seen: set[str] = set()
+        by_date = date.today()
+
+        for _ in range(max_pages):
+            params = {
+                "AUTH": "",
+                "EXCD": exchange,
+                "SYMB": ticker,
+                "GUBN": gubn,
+                "BYMD": by_date.strftime("%Y%m%d"),
+                "MODP": "0",
+            }
+            try:
+                body = await self._client.get(
+                    "/uapi/overseas-price/v1/quotations/dailyprice",
+                    self._TR_US_DAILY,
+                    params,
+                )
+            except Exception:
+                break
+
+            rows = body.get("output2", [])
+            if not rows:
+                break
+
+            batch_dates: list[str] = []
+            new = 0
+            for r in rows:
+                d_str = r.get("xymd", "")
+                if not d_str or len(d_str) != 8:
+                    continue
+                batch_dates.append(d_str)
+                if d_str not in seen:
+                    seen.add(d_str)
+                    all_rows.append(r)
+                    new += 1
+
+            if new == 0 or not batch_dates:
+                break
+
+            oldest_str = min(batch_dates)
+            try:
+                oldest = date(
+                    int(oldest_str[:4]), int(oldest_str[4:6]), int(oldest_str[6:8])
+                )
+            except ValueError:
+                break
+            by_date = oldest - timedelta(days=1)
+            if by_date < date(1960, 1, 1):
+                break
+
+        all_rows.sort(key=lambda r: r.get("xymd", ""))
+        return self._us_rows_to_dicts(all_rows)
+
+    @staticmethod
+    def _us_rows_to_dicts(rows: list) -> list[dict]:
+        def _f(v: object, default: float = 0.0) -> float:
+            try:
+                return float(v or default)
+            except (ValueError, TypeError):
+                return default
+
+        return [
+            {
+                "date":   r.get("xymd", ""),
+                "open":   _f(r.get("open")),
+                "high":   _f(r.get("high")),
+                "low":    _f(r.get("low")),
+                "close":  _f(r.get("clos")),
+                "volume": int(r.get("tvol", 0) or 0),
+            }
+            for r in rows
+        ]
 
     async def get_daily_ohlcv(self, ticker: str, period: str = "D") -> list[dict]:
         """1회 호출 — 일/주/월봉"""

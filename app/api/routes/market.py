@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 
 from app.core.dependencies import get_market_api
-from app.data.symbols import search_symbols
+from app.data.symbols import search_symbols, is_us_ticker, get_us_exchange
 from app.kis import master as stock_master
 from app.kis.market import MarketAPI
 
@@ -109,6 +109,9 @@ async def get_price(ticker: str, api: MarketAPI = Depends(get_market_api)):
     return await api.get_price(ticker)
 
 
+_US_GUBN_MAP = {"D": "0", "W": "1", "M": "2"}
+
+
 @router.get("/ohlcv/{ticker}")
 async def get_ohlcv(
     ticker: str,
@@ -119,16 +122,33 @@ async def get_ohlcv(
         return cached
 
     try:
-        if interval == "all":
-            result = await api.get_daily_ohlcv_all(ticker, "D")   # max 100콜
-        elif interval == "1y":
-            result = await api.get_yearly_ohlcv(ticker)
-        elif interval in _PERIOD_MAP:
-            period, pages = _PERIOD_MAP[interval]
-            result = await api.get_daily_ohlcv_all(ticker, period, max_pages=pages)
+        if is_us_ticker(ticker):
+            # ── 해외주식 OHLCV ──────────────────────────────────────────
+            exchange = get_us_exchange(ticker)
+            if interval == "all":
+                result = await api.get_us_ohlcv_all(ticker, exchange, "0", max_pages=100)
+            elif interval == "1y":
+                monthly = await api.get_us_ohlcv_all(ticker, exchange, "2", max_pages=10)
+                result = _aggregate_yearly_us(monthly)
+            elif interval in _PERIOD_MAP:
+                period, pages = _PERIOD_MAP[interval]
+                gubn = _US_GUBN_MAP.get(period, "0")
+                result = await api.get_us_ohlcv_all(ticker, exchange, gubn, max_pages=pages)
+            else:
+                # 분봉 미지원 — 일봉 5페이지로 대체
+                result = await api.get_us_ohlcv_all(ticker, exchange, "0", max_pages=5)
         else:
-            minutes, calls = _MINUTE_MAP.get(interval, (1, 1))
-            result = await api.get_minute_ohlcv(ticker, interval_minutes=minutes, calls=calls)
+            # ── 국내주식 OHLCV ──────────────────────────────────────────
+            if interval == "all":
+                result = await api.get_daily_ohlcv_all(ticker, "D")
+            elif interval == "1y":
+                result = await api.get_yearly_ohlcv(ticker)
+            elif interval in _PERIOD_MAP:
+                period, pages = _PERIOD_MAP[interval]
+                result = await api.get_daily_ohlcv_all(ticker, period, max_pages=pages)
+            else:
+                minutes, calls = _MINUTE_MAP.get(interval, (1, 1))
+                result = await api.get_minute_ohlcv(ticker, interval_minutes=minutes, calls=calls)
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(f"OHLCV 실패 {ticker} interval={interval}: {e}")
@@ -137,3 +157,22 @@ async def get_ohlcv(
     if result:
         _cache_set(ticker, interval, result)
     return result
+
+
+def _aggregate_yearly_us(monthly: list[dict]) -> list[dict]:
+    yearly: dict[str, dict] = {}
+    for r in monthly:
+        year = r["date"][:4]
+        if year not in yearly:
+            yearly[year] = {
+                "date": year + "0101",
+                "open": r["open"], "high": r["high"],
+                "low":  r["low"],  "close": r["close"],
+                "volume": r["volume"],
+            }
+        else:
+            yearly[year]["high"]   = max(yearly[year]["high"], r["high"])
+            yearly[year]["low"]    = min(yearly[year]["low"],  r["low"])
+            yearly[year]["close"]  = r["close"]
+            yearly[year]["volume"] += r["volume"]
+    return sorted(yearly.values(), key=lambda r: r["date"])

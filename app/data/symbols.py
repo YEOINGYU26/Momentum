@@ -6,8 +6,49 @@ class SymbolInfo:
     ticker: str
     name: str
     sub: str
-    exchange: str
-    category: str  # 주식 | 해외주식 | 암호화폐
+    exchange: str   # KRX | KOSDAQ | NASD | NYSE | AMEX | Upbit
+    category: str   # 주식 | 해외주식 | 암호화폐
+
+
+# KIS 해외주식 거래소 코드 매핑 (ticker → EXCD)
+# NASD=NASDAQ, NYSE=New York, AMEX=American
+US_EXCHANGE: dict[str, str] = {
+    # NASDAQ
+    "AAPL": "NASD", "MSFT": "NASD", "NVDA": "NASD", "TSLA": "NASD",
+    "AMZN": "NASD", "GOOGL": "NASD", "GOOG": "NASD", "META": "NASD",
+    "NFLX": "NASD", "INTC": "NASD", "AMD": "NASD", "QCOM": "NASD",
+    "AVGO": "NASD", "COST": "NASD", "ADBE": "NASD", "CSCO": "NASD",
+    "PYPL": "NASD", "SBUX": "NASD", "MRNA": "NASD", "REGN": "NASD",
+    "ASML": "NASD", "TXN": "NASD", "AMAT": "NASD", "MU": "NASD",
+    "LRCX": "NASD", "KLAC": "NASD", "PANW": "NASD", "SNPS": "NASD",
+    "CDNS": "NASD", "MRVL": "NASD", "FTNT": "NASD", "ABNB": "NASD",
+    "DDOG": "NASD", "ZS": "NASD", "CRWD": "NASD", "OKTA": "NASD",
+    "SNOW": "NASD", "TEAM": "NASD", "MDB": "NASD", "NET": "NASD",
+    # NYSE
+    "JPM": "NYSE", "BAC": "NYSE", "GS": "NYSE", "MS": "NYSE",
+    "WMT": "NYSE", "JNJ": "NYSE", "PG": "NYSE", "UNH": "NYSE",
+    "V": "NYSE",   "MA": "NYSE",  "CVX": "NYSE", "XOM": "NYSE",
+    "BA": "NYSE",  "DIS": "NYSE", "IBM": "NYSE", "GE": "NYSE",
+    "CAT": "NYSE", "MMM": "NYSE", "HON": "NYSE", "RTX": "NYSE",
+    "LMT": "NYSE", "NOC": "NYSE", "WFC": "NYSE", "C": "NYSE",
+    "BRK.B": "NYSE", "T": "NYSE", "VZ": "NYSE", "NKE": "NYSE",
+    "KO": "NYSE",  "PEP": "NYSE", "MCD": "NYSE", "PFE": "NYSE",
+    "ABBV": "NYSE", "BMY": "NYSE", "MRK": "NYSE", "LLY": "NYSE",
+    "TSM": "NYSE", "BABA": "NYSE", "NIO": "NYSE", "RIVN": "NYSE",
+    # AMEX (ETF 포함)
+    "SPY": "AMEX", "QQQ": "NASD", "IWM": "AMEX", "GLD": "AMEX",
+    "SLV": "AMEX", "TLT": "AMEX", "VIX": "AMEX",
+}
+
+
+def get_us_exchange(ticker: str) -> str:
+    """KIS 해외주식 거래소 코드 반환 (기본값: NASD)"""
+    return US_EXCHANGE.get(ticker.upper(), "NASD")
+
+
+def is_us_ticker(ticker: str) -> bool:
+    """알파벳으로만 이루어진 종목코드 = 해외주식"""
+    return ticker.replace(".", "").isalpha()
 
 
 SYMBOL_DB: list[SymbolInfo] = [
@@ -41,8 +82,6 @@ SYMBOL_DB: list[SymbolInfo] = [
     SymbolInfo("004020", "현대제철",         "Hyundai Steel",          "KRX",    "주식"),
     SymbolInfo("010130", "고려아연",         "Korea Zinc",             "KRX",    "주식"),
     SymbolInfo("009150", "삼성전기",         "Samsung Electro-Mech",   "KRX",    "주식"),
-    SymbolInfo("018880", "한온시스템",       "Hanon Systems",          "KRX",    "주식"),
-    SymbolInfo("011790", "SK케미칼",         "SK Chemicals",           "KRX",    "주식"),
     SymbolInfo("373220", "LG에너지솔루션",   "LG Energy Solution",     "KRX",    "주식"),
     # ── 두산 그룹 ────────────────────────────────────────────────────
     SymbolInfo("034020", "두산에너빌리티",   "Doosan Enerbility",      "KRX",    "주식"),
@@ -59,20 +98,47 @@ SYMBOL_DB: list[SymbolInfo] = [
     SymbolInfo("035720", "카카오",           "Kakao Corp",             "KRX",    "주식"),
     SymbolInfo("323410", "카카오뱅크",       "Kakao Bank",             "KRX",    "주식"),
     SymbolInfo("259960", "크래프톤",         "Krafton",                "KRX",    "주식"),
-    SymbolInfo("251270", "넷마블",           "Netmarble",              "KRX",    "주식"),
-    SymbolInfo("263750", "펄어비스",         "Pearl Abyss",            "KOSDAQ", "주식"),
-    SymbolInfo("293490", "카카오게임즈",     "Kakao Games",            "KOSDAQ", "주식"),
     SymbolInfo("196170", "알테오젠",         "Alteogen",               "KOSDAQ", "주식"),
     SymbolInfo("091990", "셀트리온헬스케어", "Celltrion Healthcare",   "KOSDAQ", "주식"),
-    SymbolInfo("357780", "솔브레인",         "Soulbrain",              "KOSDAQ", "주식"),
-    # ── 해외주식 ─────────────────────────────────────────────────────
-    SymbolInfo("AAPL",  "Apple",             "Apple Inc.",             "NASDAQ", "해외주식"),
-    SymbolInfo("MSFT",  "Microsoft",         "Microsoft Corp",         "NASDAQ", "해외주식"),
-    SymbolInfo("NVDA",  "NVIDIA",            "NVIDIA Corp",            "NASDAQ", "해외주식"),
-    SymbolInfo("TSLA",  "Tesla",             "Tesla Inc.",             "NASDAQ", "해외주식"),
-    SymbolInfo("AMZN",  "Amazon",            "Amazon.com Inc.",        "NASDAQ", "해외주식"),
-    SymbolInfo("GOOGL", "Alphabet",          "Alphabet Inc.",          "NASDAQ", "해외주식"),
-    SymbolInfo("META",  "Meta",              "Meta Platforms Inc.",    "NASDAQ", "해외주식"),
+    # ── 해외주식 (NASDAQ) ────────────────────────────────────────────
+    SymbolInfo("AAPL",  "Apple",             "Apple Inc.",             "NASD",   "해외주식"),
+    SymbolInfo("MSFT",  "Microsoft",         "Microsoft Corp",         "NASD",   "해외주식"),
+    SymbolInfo("NVDA",  "NVIDIA",            "NVIDIA Corp",            "NASD",   "해외주식"),
+    SymbolInfo("TSLA",  "Tesla",             "Tesla Inc.",             "NASD",   "해외주식"),
+    SymbolInfo("AMZN",  "Amazon",            "Amazon.com Inc.",        "NASD",   "해외주식"),
+    SymbolInfo("GOOGL", "Alphabet",          "Alphabet Inc.",          "NASD",   "해외주식"),
+    SymbolInfo("META",  "Meta",              "Meta Platforms Inc.",    "NASD",   "해외주식"),
+    SymbolInfo("NFLX",  "Netflix",           "Netflix Inc.",           "NASD",   "해외주식"),
+    SymbolInfo("AMD",   "AMD",               "Advanced Micro Devices", "NASD",   "해외주식"),
+    SymbolInfo("INTC",  "Intel",             "Intel Corp",             "NASD",   "해외주식"),
+    SymbolInfo("AVGO",  "Broadcom",          "Broadcom Inc.",          "NASD",   "해외주식"),
+    SymbolInfo("QCOM",  "Qualcomm",          "Qualcomm Inc.",          "NASD",   "해외주식"),
+    SymbolInfo("COST",  "Costco",            "Costco Wholesale",       "NASD",   "해외주식"),
+    SymbolInfo("ADBE",  "Adobe",             "Adobe Inc.",             "NASD",   "해외주식"),
+    SymbolInfo("CRWD",  "CrowdStrike",       "CrowdStrike Holdings",   "NASD",   "해외주식"),
+    SymbolInfo("PANW",  "Palo Alto",         "Palo Alto Networks",     "NASD",   "해외주식"),
+    SymbolInfo("SNOW",  "Snowflake",         "Snowflake Inc.",         "NASD",   "해외주식"),
+    SymbolInfo("DDOG",  "Datadog",           "Datadog Inc.",           "NASD",   "해외주식"),
+    SymbolInfo("MU",    "Micron",            "Micron Technology",      "NASD",   "해외주식"),
+    SymbolInfo("AMAT",  "Applied Materials", "Applied Materials Inc.", "NASD",   "해외주식"),
+    SymbolInfo("ASML",  "ASML",              "ASML Holding NV",        "NASD",   "해외주식"),
+    SymbolInfo("MRNA",  "Moderna",           "Moderna Inc.",           "NASD",   "해외주식"),
+    # ── 해외주식 (NYSE) ──────────────────────────────────────────────
+    SymbolInfo("TSM",   "TSMC",              "Taiwan Semiconductor",   "NYSE",   "해외주식"),
+    SymbolInfo("V",     "Visa",              "Visa Inc.",              "NYSE",   "해외주식"),
+    SymbolInfo("MA",    "Mastercard",        "Mastercard Inc.",        "NYSE",   "해외주식"),
+    SymbolInfo("JPM",   "JPMorgan",          "JPMorgan Chase",         "NYSE",   "해외주식"),
+    SymbolInfo("WMT",   "Walmart",           "Walmart Inc.",           "NYSE",   "해외주식"),
+    SymbolInfo("JNJ",   "J&J",               "Johnson & Johnson",      "NYSE",   "해외주식"),
+    SymbolInfo("XOM",   "ExxonMobil",        "Exxon Mobil Corp",       "NYSE",   "해외주식"),
+    SymbolInfo("CVX",   "Chevron",           "Chevron Corp",           "NYSE",   "해외주식"),
+    SymbolInfo("UNH",   "UnitedHealth",      "UnitedHealth Group",     "NYSE",   "해외주식"),
+    SymbolInfo("LLY",   "Eli Lilly",         "Eli Lilly and Co",       "NYSE",   "해외주식"),
+    SymbolInfo("BABA",  "Alibaba",           "Alibaba Group",          "NYSE",   "해외주식"),
+    SymbolInfo("NIO",   "NIO",               "NIO Inc.",               "NYSE",   "해외주식"),
+    SymbolInfo("BA",    "Boeing",            "Boeing Co",              "NYSE",   "해외주식"),
+    SymbolInfo("DIS",   "Disney",            "Walt Disney Co",         "NYSE",   "해외주식"),
+    SymbolInfo("NKE",   "Nike",              "Nike Inc.",              "NYSE",   "해외주식"),
     # ── 암호화폐 (Upbit) ─────────────────────────────────────────────
     SymbolInfo("BTC",  "Bitcoin",            "Bitcoin / KRW",          "Upbit",  "암호화폐"),
     SymbolInfo("ETH",  "Ethereum",           "Ethereum / KRW",         "Upbit",  "암호화폐"),

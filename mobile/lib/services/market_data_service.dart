@@ -14,6 +14,8 @@ class MarketDataService {
 
   static bool isKoreanStock(String t) => RegExp(r'^\d{6}$').hasMatch(t);
   static bool isCrypto(String t) => _cryptoMarkets.containsKey(t.toUpperCase());
+  static bool isUsTicker(String t) =>
+      !isKoreanStock(t) && !isCrypto(t) && RegExp(r'^[A-Za-z.]+$').hasMatch(t);
 
   // ── Current price ──────────────────────────────────────────────────────────
 
@@ -21,6 +23,7 @@ class MarketDataService {
     final t = ticker.toUpperCase();
     if (isKoreanStock(t)) return _fetchKis(t);
     if (isCrypto(t)) return _fetchUpbit(_cryptoMarkets[t]!);
+    if (isUsTicker(t)) return _fetchKis(t);   // 백엔드가 KIS 해외주식 API로 처리
     return null;
   }
 
@@ -36,11 +39,14 @@ class MarketDataService {
       final price = (o['current_price'] as num?)?.toDouble() ?? 0.0;
       final change = (o['change'] as num?)?.toDouble() ?? 0.0;
       final rate = (o['change_rate'] as num?)?.toDouble() ?? 0.0;
+      final isUsd = (o['currency'] as String? ?? 'KRW') == 'USD';
+      final fmt = isUsd ? _fmtUsd : _fmtNum;
       return PriceResult(
-        price: _fmtNum(price),
-        change: '${change >= 0 ? '+' : ''}${_fmtNum(change.abs())}',
+        price: fmt(price),
+        change: '${change >= 0 ? '+' : ''}${fmt(change.abs())}',
         pct: '${rate >= 0 ? '+' : ''}${rate.abs().toStringAsFixed(2)}%',
         isUp: isUp,
+        currency: isUsd ? 'USD' : 'KRW',
       );
     } catch (_) {
       return null;
@@ -62,6 +68,7 @@ class MarketDataService {
         change: '${change >= 0 ? '+' : ''}${_fmtNum(change.abs())}',
         pct: '${rate >= 0 ? '+' : ''}${rate.toStringAsFixed(2)}%',
         isUp: change >= 0,
+        currency: 'KRW',
       );
     } catch (_) {
       return null;
@@ -78,6 +85,7 @@ class MarketDataService {
     final t = ticker.toUpperCase();
     if (isKoreanStock(t)) return _kisOhlcvRange(t, range);
     if (isCrypto(t)) return _upbitOhlcvRange(_cryptoMarkets[t]!, range);
+    if (isUsTicker(t)) return _kisOhlcvRange(t, range);   // 백엔드가 해외주식 OHLCV 처리
     return _fakePrices(ticker, 30);
   }
 
@@ -140,9 +148,19 @@ class MarketDataService {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
+  // KRW: 정수 + 쉼표 (예: 75,400)
   static String _fmtNum(double v) {
     return v.toStringAsFixed(0).replaceAllMapped(
         RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},');
+  }
+
+  // USD: 소수점 2자리 + 쉼표 (예: 1,234.56 또는 188.23)
+  static String _fmtUsd(double v) {
+    final s = v.toStringAsFixed(2);
+    final parts = s.split('.');
+    final intPart = parts[0].replaceAllMapped(
+        RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},');
+    return '$intPart.${parts[1]}';
   }
 
   // Deterministic fake prices based on ticker hash (for non-supported tickers)
@@ -163,11 +181,13 @@ class MarketDataService {
 class PriceResult {
   final String price, change, pct;
   final bool isUp;
+  final String currency;   // "KRW" | "USD"
   const PriceResult({
     required this.price,
     required this.change,
     required this.pct,
     required this.isUp,
+    this.currency = 'KRW',
   });
 }
 

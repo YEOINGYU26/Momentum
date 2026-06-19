@@ -2,12 +2,17 @@ from app.kis.client import KISClient
 from app.core.config import Settings
 
 
-# 모의투자 tr_id
+# 국내주식 tr_id
 _TR_BUY_MOCK = "VTTC0802U"
 _TR_SELL_MOCK = "VTTC0801U"
-# 실거래 tr_id
 _TR_BUY_REAL = "TTTC0802U"
 _TR_SELL_REAL = "TTTC0801U"
+
+# 해외주식 tr_id
+_TR_US_BUY_MOCK  = "VTTT1002U"
+_TR_US_SELL_MOCK = "VTTT1001U"
+_TR_US_BUY_REAL  = "TTTT1002U"
+_TR_US_SELL_REAL = "TTTT1006U"
 
 
 class OrdersAPI:
@@ -21,6 +26,11 @@ class OrdersAPI:
         if self._settings.kis_is_mock:
             return _TR_BUY_MOCK if side == "buy" else _TR_SELL_MOCK
         return _TR_BUY_REAL if side == "buy" else _TR_SELL_REAL
+
+    def _tr_id_us(self, side: str) -> str:
+        if self._settings.kis_is_mock:
+            return _TR_US_BUY_MOCK if side == "buy" else _TR_US_SELL_MOCK
+        return _TR_US_BUY_REAL if side == "buy" else _TR_US_SELL_REAL
 
     async def _place_order(
         self,
@@ -92,3 +102,69 @@ class OrdersAPI:
 
     async def sell_market(self, ticker: str, quantity: int) -> dict:
         return await self._place_order("sell", ticker, quantity, 0, "01")
+
+    # ── 해외주식 주문 ────────────────────────────────────────────────────────
+
+    async def _place_us_order(
+        self,
+        side: str,
+        ticker: str,
+        quantity: int,
+        price: float,
+        exchange: str,
+        order_type: str = "00",
+    ) -> dict:
+        """
+        해외주식 주문
+        order_type: "00"=지정가, "01"=시장가
+        exchange: "NASD" | "NYSE" | "AMEX"
+        price: USD (소수점 2자리, 시장가는 0.0)
+        """
+        unpr = "0" if order_type == "01" else f"{price:.2f}"
+        payload = {
+            "CANO": self._settings.kis_account_no,
+            "ACNT_PRDT_CD": self._settings.kis_account_product_code,
+            "OVRS_EXCG_CD": exchange,
+            "PDNO": ticker,
+            "ORD_DVSN": order_type,
+            "ORD_QTY": str(quantity),
+            "OVRS_ORD_UNPR": unpr,
+            "ORD_SVR_DVSN_CD": "0",
+        }
+        body = await self._client.post(
+            "/uapi/overseas-stock/v1/trading/order",
+            self._tr_id_us(side),
+            payload,
+        )
+        output = body.get("output", {})
+        return {
+            "order_no":   output.get("ODNO", ""),
+            "order_time": output.get("ORD_TMD", ""),
+            "ticker":     ticker,
+            "side":       side,
+            "quantity":   quantity,
+            "price":      price,
+            "order_type": order_type,
+            "exchange":   exchange,
+            "currency":   "USD",
+        }
+
+    async def buy_us_limit(
+        self, ticker: str, quantity: int, price: float, exchange: str
+    ) -> dict:
+        """해외주식 지정가 매수"""
+        return await self._place_us_order("buy", ticker, quantity, price, exchange, "00")
+
+    async def sell_us_limit(
+        self, ticker: str, quantity: int, price: float, exchange: str
+    ) -> dict:
+        """해외주식 지정가 매도"""
+        return await self._place_us_order("sell", ticker, quantity, price, exchange, "00")
+
+    async def buy_us_market(self, ticker: str, quantity: int, exchange: str) -> dict:
+        """해외주식 시장가 매수"""
+        return await self._place_us_order("buy", ticker, quantity, 0.0, exchange, "01")
+
+    async def sell_us_market(self, ticker: str, quantity: int, exchange: str) -> dict:
+        """해외주식 시장가 매도"""
+        return await self._place_us_order("sell", ticker, quantity, 0.0, exchange, "01")
