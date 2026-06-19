@@ -1,3 +1,7 @@
+import time
+from dataclasses import dataclass
+from typing import Optional
+
 from fastapi import APIRouter, Depends
 
 from app.core.dependencies import get_market_api
@@ -6,6 +10,31 @@ from app.kis import master as stock_master
 from app.kis.market import MarketAPI
 
 router = APIRouter(prefix="/market", tags=["market"])
+
+# ── OHLCV 인메모리 TTL 캐시 ─────────────────────────────────────────────────
+@dataclass
+class _CacheEntry:
+    data: list
+    expires_at: float
+
+_ohlcv_cache: dict[str, _CacheEntry] = {}
+
+# 일봉/주봉/월봉/전체/연봉: 10분 캐시 (장중에도 일봉은 하루 1번 확정)
+# 분봉: 30초 캐시 (실시간성 유지)
+_CACHE_TTL: dict[str, int] = {
+    "1d": 600, "1w": 600, "1mo": 600, "all": 600, "1y": 600,
+    "1m": 30, "5m": 30, "15m": 30, "1h": 60,
+}
+
+def _cache_get(ticker: str, interval: str) -> Optional[list]:
+    entry = _ohlcv_cache.get(f"{ticker}_{interval}")
+    if entry and time.time() < entry.expires_at:
+        return entry.data
+    return None
+
+def _cache_set(ticker: str, interval: str, data: list) -> None:
+    ttl = _CACHE_TTL.get(interval, 600)
+    _ohlcv_cache[f"{ticker}_{interval}"] = _CacheEntry(data=data, expires_at=time.time() + ttl)
 
 # interval → (period, max_pages)
 # max_pages=0 → get_daily_ohlcv 1회 호출 (분봉 aggregation용)
@@ -86,17 +115,25 @@ async def get_ohlcv(
     interval: str = "1d",
     api: MarketAPI = Depends(get_market_api),
 ):
+    if cached := _cache_get(ticker, interval):
+        return cached
+
     try:
         if interval == "all":
-            return await api.get_daily_ohlcv_all(ticker, "D")   # max 100콜
-        if interval == "1y":
-            return await api.get_yearly_ohlcv(ticker)
-        if interval in _PERIOD_MAP:
+            result = await api.get_daily_ohlcv_all(ticker, "D")   # max 100콜
+        elif interval == "1y":
+            result = await api.get_yearly_ohlcv(ticker)
+        elif interval in _PERIOD_MAP:
             period, pages = _PERIOD_MAP[interval]
-            return await api.get_daily_ohlcv_all(ticker, period, max_pages=pages)
-        minutes, calls = _MINUTE_MAP.get(interval, (1, 1))
-        return await api.get_minute_ohlcv(ticker, interval_minutes=minutes, calls=calls)
+            result = await api.get_daily_ohlcv_all(ticker, period, max_pages=pages)
+        else:
+            minutes, calls = _MINUTE_MAP.get(interval, (1, 1))
+            result = await api.get_minute_ohlcv(ticker, interval_minutes=minutes, calls=calls)
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(f"OHLCV 실패 {ticker} interval={interval}: {e}")
         return []
+
+    if result:
+        _cache_set(ticker, interval, result)
+    return result

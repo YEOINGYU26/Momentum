@@ -120,7 +120,7 @@ class _ChartScreenState extends State<ChartScreen> {
 
   Future<void> _fetchCandles() async {
     if (!mounted) return;
-    setState(() => _loading = true);
+    setState(() { _loading = true; _candles = []; });
     _updateStockName(_currentTicker);
     try {
       final candles = _isCrypto
