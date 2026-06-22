@@ -211,13 +211,19 @@ FCM_CREDENTIALS_PATH=...        # Firebase 서비스 계정 JSON 경로 (선택)
 
 ## 캔들차트 (candle_chart.dart) 주요 기능
 - Flutter CustomPainter 기반 네이티브 구현 (WebView/TradingView 미사용)
-- 롱프레스 → 점선 크로스헤어 표시, 손 뗀 후 유지, **탭 = 크로스헤어 이동** (해제 X)
-- 크로스헤어 활성 시 꾹 누르면 상대 위치로 이동
+- 롱프레스(200ms) → 점선 크로스헤어 표시, **탭 = 크로스헤어 해제**, **드래그 = 즉시 이동** (200ms 대기 없음)
+- 크로스헤어 활성 상태에서 드래그하면 proximity 조건 없이 즉각 이동
 - 슬라이드(패닝) 시 크로스헤어 자동 해제 + 차트 스크롤
 - 오른쪽 가격축 드래그 → 세로 줌 (exp 스케일)
 - 차트 영역 핀치 → 가로 줌 (visibleCount 조절)
 - 오른쪽 슬라이드 → 과거 데이터, 왼쪽 슬라이드 → 최신 데이터
 - 거래량 바 영역: 캔들이 절대 침범 불가 (`canvas.clipRect` 적용)
+
+### 크로스헤어 인터랙션 구현 (2026-06-22)
+- `GestureDetector`는 duration 파라미터가 없음 → `Listener` + `Timer(200ms)` 조합으로 롱프레스 구현
+- `_suppressNextTap` 플래그: 타이머 발화 직후 탭 이벤트가 올라오면 무시 (롱프레스 직후 해제 방지)
+- `_crossDrag` 플래그: 크로스헤어 활성 + 싱글 포인터 드래그 시 `onScaleStart`에서 설정
+- 기존 28px proximity 체크 제거 — 크로스헤어 활성이면 어디서 드래그해도 이동 모드 진입
 
 ## 차트 그리기 도구 (KAN-16, 완료)
 
@@ -269,11 +275,12 @@ mobile/assets/
 ## Jira 문서
 - **KAN-17**: 구현 기능 명세서 — 전체 완성 기능 목록, 버그 수정 이력, 미완료 작업 정리
 - **KAN-18**: 2026-06-18 작업 내용 정리 (완료)
-- **KAN-19**: 추세선 SharedPreferences 영구 저장 (미완료)
-- **KAN-20**: 매매선 역할별 백엔드 연동 (미완료)
+- **KAN-19**: 추세선 SharedPreferences 영구 저장 (완료)
+- **KAN-20**: AND 복합 조건 매매 빌더 — ConditionService + 조건 매매 탭 전면 개편 (완료)
 - **KAN-21**: KIS 해외주식(미장) API 연동 (완료)
 - **KAN-22**: 차트 그리기 도구 피커 + 15종 드로잉 툴 (완료)
-- **KAN-23**: 2026-06-18~19 작업 내용 정리
+- **KAN-23**: 2026-06-18~19 작업 내용 정리 (완료)
+- **KAN-24**: 2026-06-22 작업 내용 정리
 
 ## 매매선 (LineRole) 구조 (KAN-18, 완료)
 
@@ -412,3 +419,31 @@ class DrawingPoint {
 ### _notifyLinesChanged 필터링
 - ChartProvider에 전달하는 라인은 `drawType == trendLine || isHorizontal` 만 포함
 - 나머지 드로잉 도구 라인은 캔들차트 세션 내 로컬 상태로만 관리 (SharedPreferences 저장 대상 아님)
+
+## AND 복합 조건 매매 빌더 (KAN-20, 완료)
+
+### 개요
+차트에 그린 매매선 + 기술 지표 조건을 AND로 결합해, **모든 조건이 동시에 충족될 때** 자동 주문.
+
+### 백엔드 (`app/services/condition_service.py`)
+- `CompoundRule` dataclass: `ticker, side, quantity, interval_seconds, timeframe, line_conditions[], indicator_conditions[]`
+- `ConditionService.add_rule()`: 규칙별 asyncio Task 생성 (싱글톤, `get_condition_service()`)
+- `_loop()`: interval_seconds마다 `_evaluate()` 호출
+- `_evaluate()`: 라인 조건(현재가 vs 선의 effective_price, 오차 ≤ tick×3) + 지표 조건(전략 Signal 비교) 전부 AND
+- `_execute()`: 전부 통과 시 market order 실행 + FCM 알림
+- REST: `GET/POST /api/v1/conditions`, `DELETE /api/v1/conditions/{rule_id}`
+
+### Flutter
+- `CompoundConditionModel` (`mobile/lib/models/compound_condition_model.dart`): 서버 응답 파싱 + `conditionSummary` 요약 문자열
+- `ConditionProvider` (`mobile/lib/providers/condition_provider.dart`): `fetchRules / addRule / deleteRule`
+
+### 조건 매매 탭 UI (`_ConditionTradeTab`)
+- 매수/매도 방향 토글 (색상 연동)
+- 조건 카드 5종 (Switch 토글, ON 시 펼쳐짐): 매매선 터치 / RSI(14) / 골든크로스 MA5/20 / 볼린저밴드 BB(20,2) / 이치모쿠(WIP)
+- 봉 주기 칩 (일/주/월/1년) + 수량 카운터 + 실행 간격 칩
+- 등록 버튼: 활성 조건 개수 표시 ("매수 조건 N개 AND 등록")
+- `_CompoundRulesList`: 등록된 규칙 카드 + 삭제 확인 다이얼로그
+- `_ConditionCard`: 공통 토글 카드 위젯 (헤더 + 펼침 영역)
+
+### 탭 순서 (자동매매 화면)
+조건 매매 → 지정가 매매 → 전문가 전략
