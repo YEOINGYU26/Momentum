@@ -3,6 +3,8 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from app.core.dependencies import get_orders_api, get_price_monitor
+from app.data.symbols import is_us_ticker
+from app.kis import us_master
 from app.kis.orders import OrdersAPI
 from app.services.price_monitor import PriceAlert, PriceMonitorService
 
@@ -12,7 +14,7 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 class OrderRequest(BaseModel):
     ticker: str = Field(..., examples=["005930"])
     quantity: int = Field(..., gt=0)
-    price: int = Field(..., gt=0)
+    price: float = Field(..., gt=0)   # KRW(원) 또는 USD (소수점 지원)
 
 
 class MarketOrderRequest(BaseModel):
@@ -22,7 +24,7 @@ class MarketOrderRequest(BaseModel):
 
 class AlertRequest(BaseModel):
     ticker: str = Field(..., examples=["005930"])
-    target_price: int = Field(default=0, ge=0)
+    target_price: float = Field(default=0.0, ge=0)   # KRW 또는 USD
     side: str = Field(..., pattern="^(buy|sell)$")
     quantity: int = Field(..., gt=0)
     # 추세선 알람 (선택)
@@ -34,21 +36,33 @@ class AlertRequest(BaseModel):
 
 @router.post("/buy/limit")
 async def buy_limit(req: OrderRequest, api: OrdersAPI = Depends(get_orders_api)):
-    return await api.buy_limit(req.ticker, req.quantity, req.price)
+    if is_us_ticker(req.ticker):
+        exchange = us_master.lookup_exchange(req.ticker)
+        return await api.buy_us_limit(req.ticker, req.quantity, req.price, exchange)
+    return await api.buy_limit(req.ticker, req.quantity, int(req.price))
 
 
 @router.post("/sell/limit")
 async def sell_limit(req: OrderRequest, api: OrdersAPI = Depends(get_orders_api)):
-    return await api.sell_limit(req.ticker, req.quantity, req.price)
+    if is_us_ticker(req.ticker):
+        exchange = us_master.lookup_exchange(req.ticker)
+        return await api.sell_us_limit(req.ticker, req.quantity, req.price, exchange)
+    return await api.sell_limit(req.ticker, req.quantity, int(req.price))
 
 
 @router.post("/buy/market")
 async def buy_market(req: MarketOrderRequest, api: OrdersAPI = Depends(get_orders_api)):
+    if is_us_ticker(req.ticker):
+        exchange = us_master.lookup_exchange(req.ticker)
+        return await api.buy_us_market(req.ticker, req.quantity, exchange)
     return await api.buy_market(req.ticker, req.quantity)
 
 
 @router.post("/sell/market")
 async def sell_market(req: MarketOrderRequest, api: OrdersAPI = Depends(get_orders_api)):
+    if is_us_ticker(req.ticker):
+        exchange = us_master.lookup_exchange(req.ticker)
+        return await api.sell_us_market(req.ticker, req.quantity, exchange)
     return await api.sell_market(req.ticker, req.quantity)
 
 

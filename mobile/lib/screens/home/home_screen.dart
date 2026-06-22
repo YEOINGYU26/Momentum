@@ -483,7 +483,7 @@ class _ItemTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = item.up ? AppColors.green : AppColors.red;
+    final color = item.up ? AppColors.red : AppColors.blue;
     final avatarColor = _avatarColors[item.ticker.hashCode.abs() % _avatarColors.length];
     final label = item.ticker.length > 4 ? item.ticker.substring(0, 4) : item.ticker;
 

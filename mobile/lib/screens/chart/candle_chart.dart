@@ -53,9 +53,41 @@ class CandleData {
 
 // ─── Drawing types ───────────────────────────────────────────────────────────
 
-enum DrawTool  { none, trendLine }
-enum DrawPhase { idle, placingFirst, placingSecond, selected }
+enum DrawTool {
+  none,
+  trendLine, crossLine, parallelChannel,
+  fibRetracement, fibExtension, fibTimeZone,
+  headAndShoulders, elliottWave, xabcdPattern,
+  longPosition, shortPosition,
+  brush,
+  text, note, priceNote,
+}
+enum DrawPhase { idle, placingFirst, placingSecond, placingMore, selected }
 enum LineStyle { solid, dashed, dotted }
+
+class DrawingPoint {
+  final int time;
+  final double price;
+  const DrawingPoint(this.time, this.price);
+}
+
+extension _DrawToolX on DrawTool {
+  int get pointCount {
+    switch (this) {
+      case DrawTool.crossLine:
+      case DrawTool.text: case DrawTool.note: case DrawTool.priceNote: return 1;
+      case DrawTool.trendLine: case DrawTool.fibRetracement: case DrawTool.fibTimeZone:
+      case DrawTool.longPosition: case DrawTool.shortPosition: return 2;
+      case DrawTool.parallelChannel: case DrawTool.fibExtension: return 3;
+      case DrawTool.headAndShoulders: case DrawTool.xabcdPattern: return 5;
+      case DrawTool.elliottWave: return 6;
+      case DrawTool.brush: return -1;
+      case DrawTool.none: return 0;
+    }
+  }
+  bool get isTextTool =>
+      this == DrawTool.text || this == DrawTool.note || this == DrawTool.priceNote;
+}
 
 class ChartLine {
   final int    startTime, endTime;
@@ -65,6 +97,9 @@ class ChartLine {
   final double width;
   final LineStyle style;
   final LineRole  role;
+  final DrawTool  drawType;
+  final List<DrawingPoint> pts;
+  final String? text;
 
   const ChartLine({
     required this.startTime, required this.endTime,
@@ -74,12 +109,16 @@ class ChartLine {
     this.width = 1.5,
     this.style = LineStyle.solid,
     this.role = LineRole.none,
+    this.drawType = DrawTool.trendLine,
+    this.pts = const [],
+    this.text,
   });
 
   ChartLine copyWith({
     int? startTime, int? endTime,
     double? startPrice, double? endPrice,
     Color? color, double? width, LineStyle? style, LineRole? role,
+    DrawTool? drawType, List<DrawingPoint>? pts, String? text,
   }) => ChartLine(
     startTime:  startTime  ?? this.startTime,
     endTime:    endTime    ?? this.endTime,
@@ -88,6 +127,9 @@ class ChartLine {
     color: color ?? this.color, isHorizontal: isHorizontal,
     width: width ?? this.width, style: style ?? this.style,
     role: role ?? this.role,
+    drawType: drawType ?? this.drawType,
+    pts: pts ?? this.pts,
+    text: text ?? this.text,
   );
 }
 
@@ -199,6 +241,9 @@ class _CandleChartState extends State<CandleChart> {
   final Map<IndicatorType, IndicatorConfig> _indConfigs =
       Map.from(_kDefaultConfigs);
   bool _indicatorPickerOpen = false;
+  bool _drawingPickerOpen  = false;
+  List<DrawingPoint> _pendingPts  = [];
+  List<DrawingPoint> _brushPending = [];
 
   DrawTool  _tool  = DrawTool.none;
   DrawPhase _phase = DrawPhase.idle;
@@ -223,7 +268,9 @@ class _CandleChartState extends State<CandleChart> {
 
   List<CandleData> get _c => widget.candles;
   bool get _drawing =>
-      _phase == DrawPhase.placingFirst || _phase == DrawPhase.placingSecond;
+      _phase == DrawPhase.placingFirst ||
+      _phase == DrawPhase.placingSecond ||
+      _phase == DrawPhase.placingMore;
   bool get _selVisible => _phase == DrawPhase.selected && _selIdx != null;
 
   double get _toolbarH => _baseToolH;
@@ -483,15 +530,22 @@ class _CandleChartState extends State<CandleChart> {
 
   void _activateTool(DrawTool tool) {
     setState(() {
-      if (_tool == tool && _drawing) {
+      if (_tool == tool && (_drawing || _tool == DrawTool.brush)) {
         _tool = DrawTool.none; _phase = DrawPhase.idle;
         _cursor = null; _fpTime = null; _fpPrice = null;
         _drawFinger = null; _drawCursorBase = null;
+        _pendingPts = []; _brushPending = [];
       } else {
-        _tool = tool; _phase = DrawPhase.placingFirst;
-        _cursor = Offset(_chartW / 2, _chartH * 0.35);
-        _drawFinger = null; _drawCursorBase = null;
-        _fpTime = null; _fpPrice = null;
+        _tool = tool; _pendingPts = []; _brushPending = [];
+        if (tool == DrawTool.brush) {
+          _phase = DrawPhase.idle;
+          _cursor = null;
+        } else if (tool.pointCount != 0) {
+          _phase = DrawPhase.placingFirst;
+          _cursor = Offset(_chartW / 2, _chartH * 0.35);
+          _drawFinger = null; _drawCursorBase = null;
+          _fpTime = null; _fpPrice = null;
+        }
       }
       _selIdx = null; _selEndpoint = null; _cross = null; _crossCandle = null;
     });
@@ -499,34 +553,116 @@ class _CandleChartState extends State<CandleChart> {
 
   void _handleDrawTap() {
     final pos = _cursor ?? _lastTouch;
-    if (pos == null) { return; }
+    if (pos == null) return;
+    if (_tool == DrawTool.brush) return;
+
+    if (_tool.isTextTool) {
+      final t = _toTime(pos.dx); final p = _toPrice(pos.dy);
+      if (t != null && p != null) _showTextInput(t, p, _tool);
+      return;
+    }
+
+    final needed = _tool.pointCount;
+
     if (_phase == DrawPhase.placingFirst) {
       final t = _toTime(pos.dx); final p = _toPrice(pos.dy);
       if (t != null && p != null) {
-        // 두 번째 커서는 첫 번째 점에서 8칸 오른쪽으로 시작
-        final secondX = (pos.dx + _cw * 8).clamp(0.0, _chartW - 1);
-        final secondPos = Offset(secondX, pos.dy);
-        setState(() {
-          _fpTime = t; _fpPrice = p; _phase = DrawPhase.placingSecond;
-          _cursor = secondPos; _drawFinger = null; _drawCursorBase = secondPos;
-        });
+        if (needed == 1) {
+          setState(() {
+            _lines.add(ChartLine(
+              startTime: t, endTime: t, startPrice: p, endPrice: p,
+              color: _dColor, width: _dWidth, style: _dStyle,
+              drawType: _tool, pts: [DrawingPoint(t, p)],
+            ));
+            _phase = DrawPhase.idle; _tool = DrawTool.none;
+            _cursor = null; _fpTime = null; _fpPrice = null;
+            _pendingPts = [];
+          });
+          _notifyLinesChanged();
+        } else {
+          final secondX = (pos.dx + _cw * 8).clamp(0.0, _chartW - 1);
+          final secondPos = Offset(secondX, pos.dy);
+          setState(() {
+            _pendingPts = [DrawingPoint(t, p)];
+            _fpTime = t; _fpPrice = p; _phase = DrawPhase.placingSecond;
+            _cursor = secondPos; _drawFinger = null; _drawCursorBase = secondPos;
+          });
+        }
       }
-    } else if (_phase == DrawPhase.placingSecond) {
+    } else if (_phase == DrawPhase.placingSecond || _phase == DrawPhase.placingMore) {
       final t = _toTime(pos.dx); final p = _toPrice(pos.dy);
       if (t != null && p != null) {
-        setState(() {
-          _lines.add(ChartLine(
-            startTime: _fpTime!, endTime: t,
-            startPrice: _fpPrice!, endPrice: p,
-            color: _dColor, width: _dWidth, style: _dStyle,
-          ));
-          _phase = DrawPhase.idle; _tool = DrawTool.none;
-          _fpTime = null; _fpPrice = null; _cursor = null;
-          _drawFinger = null; _drawCursorBase = null; _selIdx = null;
-        });
-        _notifyLinesChanged();
+        _pendingPts.add(DrawingPoint(t, p));
+        if (_pendingPts.length >= needed) {
+          final pts = List<DrawingPoint>.from(_pendingPts);
+          setState(() {
+            _lines.add(ChartLine(
+              startTime: pts.first.time, endTime: pts.last.time,
+              startPrice: pts.first.price, endPrice: pts.last.price,
+              color: _dColor, width: _dWidth, style: _dStyle,
+              drawType: _tool, pts: pts,
+            ));
+            _phase = DrawPhase.idle; _tool = DrawTool.none;
+            _fpTime = null; _fpPrice = null; _cursor = null;
+            _drawFinger = null; _drawCursorBase = null; _selIdx = null;
+            _pendingPts = [];
+          });
+          _notifyLinesChanged();
+        } else {
+          final nextX = (pos.dx + _cw * 8).clamp(0.0, _chartW - 1);
+          setState(() {
+            _phase = DrawPhase.placingMore;
+            _cursor = Offset(nextX, pos.dy);
+            _drawFinger = null; _drawCursorBase = Offset(nextX, pos.dy);
+          });
+        }
       }
     }
+  }
+
+  void _showTextInput(int time, double price, DrawTool tool) {
+    final ctrl = TextEditingController();
+    final title = tool == DrawTool.text ? '텍스트' : tool == DrawTool.note ? '노트' : '프라이스 노트';
+    showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1F2E),
+        title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 16)),
+        content: TextField(
+          controller: ctrl, autofocus: true,
+          maxLines: tool == DrawTool.text ? 1 : 3,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: '내용을 입력하세요',
+            hintStyle: const TextStyle(color: Colors.white38),
+            enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: AppColors.green)),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소', style: TextStyle(color: Colors.white54))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: Text('확인', style: TextStyle(color: AppColors.green)),
+          ),
+        ],
+      ),
+    ).then((txt) {
+      if (!mounted || txt == null || txt.isEmpty) {
+        setState(() { _phase = DrawPhase.idle; _tool = DrawTool.none; });
+        return;
+      }
+      setState(() {
+        _lines.add(ChartLine(
+          startTime: time, endTime: time, startPrice: price, endPrice: price,
+          color: _dColor, width: _dWidth, style: _dStyle,
+          drawType: tool, pts: [DrawingPoint(time, price)], text: txt,
+        ));
+        _phase = DrawPhase.idle; _tool = DrawTool.none;
+        _cursor = null; _pendingPts = [];
+      });
+      _notifyLinesChanged();
+    });
   }
 
   void _updateSel({Color? color, double? width, LineStyle? style}) {
@@ -565,14 +701,16 @@ class _CandleChartState extends State<CandleChart> {
   }
 
   void _notifyLinesChanged() {
-    final infos = _lines.map((ln) => ChartLineInfo(
-      startPrice:   ln.startPrice,
-      endPrice:     ln.endPrice,
-      startTime:    ln.startTime,
-      endTime:      ln.endTime,
-      isHorizontal: ln.isHorizontal,
-      role:         ln.role,
-    )).toList();
+    final infos = _lines
+      .where((ln) => ln.drawType == DrawTool.trendLine || ln.isHorizontal)
+      .map((ln) => ChartLineInfo(
+        startPrice:   ln.startPrice,
+        endPrice:     ln.endPrice,
+        startTime:    ln.startTime,
+        endTime:      ln.endTime,
+        isHorizontal: ln.isHorizontal,
+        role:         ln.role,
+      )).toList();
     widget.onLinesChanged?.call(infos);
   }
 
@@ -664,6 +802,14 @@ class _CandleChartState extends State<CandleChart> {
             GestureDetector(
               onScaleStart: (d) {
                 _lastTouch = d.localFocalPoint;
+                if (_tool == DrawTool.brush && d.pointerCount == 1) {
+                  final t = _toTime(d.localFocalPoint.dx);
+                  final p = _toPrice(d.localFocalPoint.dy);
+                  if (t != null && p != null) {
+                    setState(() { _brushPending = [DrawingPoint(t, p)]; _phase = DrawPhase.placingMore; });
+                  }
+                  return;
+                }
                 if (_drawing) {
                   _drawFinger = d.localFocalPoint; _drawCursorBase = _cursor;
                   return;
@@ -688,6 +834,14 @@ class _CandleChartState extends State<CandleChart> {
                 _startVis = _vis; _startPz = _pzoom;
               },
               onScaleUpdate: (d) {
+                if (_tool == DrawTool.brush && _phase == DrawPhase.placingMore && d.pointerCount == 1) {
+                  final t = _toTime(d.localFocalPoint.dx);
+                  final p = _toPrice(d.localFocalPoint.dy);
+                  if (t != null && p != null) {
+                    setState(() => _brushPending.add(DrawingPoint(t, p)));
+                  }
+                  return;
+                }
                 if (_drawing && d.pointerCount == 1) {
                   final df = _drawFinger; final dc = _drawCursorBase;
                   if (df != null && dc != null) {
@@ -735,7 +889,27 @@ class _CandleChartState extends State<CandleChart> {
                 });
                 if (had) { widget.onCrosshair?.call(null); }
               },
-              onScaleEnd: (_) { _selEndpoint = null; _selLineOrig = null; _selDragOrigin = null; _crossDrag = false; },
+              onScaleEnd: (_) {
+                if (_tool == DrawTool.brush && _phase == DrawPhase.placingMore) {
+                  if (_brushPending.length >= 2) {
+                    final pts = List<DrawingPoint>.from(_brushPending);
+                    setState(() {
+                      _lines.add(ChartLine(
+                        startTime: pts.first.time, endTime: pts.last.time,
+                        startPrice: pts.first.price, endPrice: pts.last.price,
+                        color: _dColor, width: _dWidth * 2, style: LineStyle.solid,
+                        drawType: DrawTool.brush, pts: pts,
+                      ));
+                      _brushPending = []; _phase = DrawPhase.idle;
+                    });
+                    _notifyLinesChanged();
+                  } else {
+                    setState(() { _brushPending = []; _phase = DrawPhase.idle; });
+                  }
+                  return;
+                }
+                _selEndpoint = null; _selLineOrig = null; _selDragOrigin = null; _crossDrag = false;
+              },
               onTapDown: (d) { _lastTouch = d.localPosition; },
               onTap: () {
                 if (_drawing) { _handleDrawTap(); return; }
@@ -765,6 +939,9 @@ class _CandleChartState extends State<CandleChart> {
                   lines: _lines, selIdx: _selIdx,
                   phase: _phase, cursor: _cursor,
                   fpTime: _fpTime, fpPrice: _fpPrice,
+                  currentTool: _tool,
+                  pendingPts: _pendingPts,
+                  brushPending: _brushPending,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -1054,23 +1231,22 @@ class _CandleChartState extends State<CandleChart> {
       child: Row(children: [
         const SizedBox(width: 8),
         GestureDetector(
-          onTap: () => _activateTool(DrawTool.trendLine),
+          onTap: _showDrawingPicker,
           child: Container(
-            width: 26,
-            height: 26,
-            padding: const EdgeInsets.all(3),
+            width: 26, height: 26, padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(
-              color: _tool == DrawTool.trendLine
+              color: (_drawing || _drawingPickerOpen || _tool != DrawTool.none)
                   ? AppColors.green.withValues(alpha: 0.2) : Colors.transparent,
               borderRadius: BorderRadius.circular(6),
               border: Border.all(
-                color: _tool == DrawTool.trendLine
+                color: (_drawing || _drawingPickerOpen || _tool != DrawTool.none)
                     ? AppColors.green.withValues(alpha: 0.6) : Colors.white24,
               ),
             ),
             child: Image.asset('assets/icons/pencil_draw.png',
                 fit: BoxFit.contain,
-                color: _tool == DrawTool.trendLine ? AppColors.green : AppColors.gray),
+                color: (_drawing || _drawingPickerOpen || _tool != DrawTool.none)
+                    ? AppColors.green : AppColors.gray),
           ),
         ),
         const SizedBox(width: 8),
@@ -1549,6 +1725,24 @@ class _CandleChartState extends State<CandleChart> {
     ).then((_) { if (mounted) setState(() => _indicatorPickerOpen = false); });
   }
 
+  void _showDrawingPicker() {
+    setState(() => _drawingPickerOpen = true);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1F2E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => _DrawingPickerSheet(
+        activeTool: _tool,
+        onToolSelected: (tool) {
+          Navigator.pop(ctx);
+          _activateTool(tool);
+        },
+      ),
+    ).then((_) { if (mounted) setState(() => _drawingPickerOpen = false); });
+  }
+
   // ── Popup menus ───────────────────────────────────────────────────────────
 
   void _showSelColorMenu(BuildContext ctx, ChartLine ln) async {
@@ -1706,6 +1900,9 @@ class _Painter extends CustomPainter {
   final Offset? cursor;
   final int? fpTime;
   final double? fpPrice;
+  final DrawTool currentTool;
+  final List<DrawingPoint> pendingPts;
+  final List<DrawingPoint> brushPending;
 
   static const _axisW    = 58.0;
   static const _timeH    = 26.0;
@@ -1720,6 +1917,9 @@ class _Painter extends CustomPainter {
     required this.lines, required this.selIdx,
     required this.phase,   required this.cursor,
     required this.fpTime,  required this.fpPrice,
+    required this.currentTool,
+    required this.pendingPts,
+    required this.brushPending,
   });
 
   bool _indVisible(IndicatorType t) =>
@@ -1940,34 +2140,70 @@ class _Painter extends CustomPainter {
           color: isFuture ? const Color(0xFF4A5368) : Colors.white);
     }
 
-    // Drawing cursor
-    if (phase == DrawPhase.placingFirst || phase == DrawPhase.placingSecond) {
-      final cur = cursor;
-      if (cur != null) {
-        final gd = Paint()..color = AppColors.green.withValues(alpha: 0.8)..strokeWidth = 0.8;
-        _dashed(canvas, Offset(cur.dx, 0), Offset(cur.dx, usableH), gd);
-        _dashed(canvas, Offset(0, cur.dy), Offset(chartW, cur.dy), gd);
-        _drawAnchor(canvas, cur, AppColors.green);
-        if (cur.dy >= 0 && cur.dy < pH) {
-          final pr = pMin + (1 - cur.dy / pH) * pSpan;
-          _axisLabel(canvas, chartW + 4, cur.dy, _fmt(pr),
-              center: false, color: AppColors.green);
+    // Drawing cursor & in-progress strokes
+    if (phase == DrawPhase.placingFirst || phase == DrawPhase.placingSecond ||
+        phase == DrawPhase.placingMore) {
+      if (currentTool != DrawTool.brush) {
+        final cur = cursor;
+        if (cur != null) {
+          final gd = Paint()..color = AppColors.green.withValues(alpha: 0.8)..strokeWidth = 0.8;
+          _dashed(canvas, Offset(cur.dx, 0), Offset(cur.dx, usableH), gd);
+          _dashed(canvas, Offset(0, cur.dy), Offset(chartW, cur.dy), gd);
+          _drawAnchor(canvas, cur, AppColors.green);
+          if (cur.dy >= 0 && cur.dy < pH) {
+            final pr = pMin + (1 - cur.dy / pH) * pSpan;
+            _axisLabel(canvas, chartW + 4, cur.dy, _fmt(pr),
+                center: false, color: AppColors.green);
+          }
         }
-      }
-      if (phase == DrawPhase.placingSecond && fpTime != null && fpPrice != null) {
-        double? fx;
-        for (int i = 0; i < vc.length; i++) {
-          if (vc[i].time >= fpTime!) { fx = (rp + i + 0.5) * cw; break; }
-        }
-        final fy = pyF(fpPrice!);
-        if (fx != null) {
-          _drawAnchor(canvas, Offset(fx, fy), AppColors.green);
-          if (cur != null) {
-            canvas.drawLine(Offset(fx, fy), cur,
+        // Draw all pending placed points and connecting lines
+        Offset? prevAnchor;
+        for (final pt in pendingPts) {
+          final px = _txToX(pt.time, vc, cw, rp);
+          final py = pyF(pt.price);
+          final anchor = Offset(px, py);
+          if (prevAnchor != null) {
+            canvas.drawLine(prevAnchor, anchor,
                 Paint()..color = AppColors.green.withValues(alpha: 0.5)..strokeWidth = 1.5);
+          }
+          _drawAnchor(canvas, anchor, AppColors.green);
+          prevAnchor = anchor;
+        }
+        if (prevAnchor != null && cursor != null) {
+          canvas.drawLine(prevAnchor, cursor!,
+              Paint()..color = AppColors.green.withValues(alpha: 0.5)..strokeWidth = 1.5);
+        } else if (pendingPts.isEmpty && phase == DrawPhase.placingSecond &&
+            fpTime != null && fpPrice != null) {
+          double? fx;
+          for (int i = 0; i < vc.length; i++) {
+            if (vc[i].time >= fpTime!) { fx = (rp + i + 0.5) * cw; break; }
+          }
+          final fy = pyF(fpPrice!);
+          if (fx != null) {
+            _drawAnchor(canvas, Offset(fx, fy), AppColors.green);
+            if (cursor != null) {
+              canvas.drawLine(Offset(fx, fy), cursor!,
+                  Paint()..color = AppColors.green.withValues(alpha: 0.5)..strokeWidth = 1.5);
+            }
           }
         }
       }
+    }
+
+    // Brush in-progress stroke
+    if (currentTool == DrawTool.brush && brushPending.length >= 2) {
+      final path = Path();
+      for (int i = 0; i < brushPending.length; i++) {
+        final px = _txToX(brushPending[i].time, vc, cw, rp);
+        final py = pyF(brushPending[i].price);
+        if (i == 0) path.moveTo(px, py); else path.lineTo(px, py);
+      }
+      canvas.drawPath(path, Paint()
+        ..color = AppColors.green.withValues(alpha: 0.8)
+        ..strokeWidth = 3.0
+        ..style = PaintingStyle.stroke
+        ..strokeJoin = StrokeJoin.round
+        ..strokeCap = StrokeCap.round);
     }
 
     canvas.restore();
@@ -2299,6 +2535,8 @@ class _Painter extends CustomPainter {
 
   void _drawLines(Canvas canvas, List<CandleData> vc, double chartW,
       double pH, double Function(double) pyFn, double cw, double rp) {
+    double txToX(int t) => _txToX(t, vc, cw, rp);
+
     for (int idx = 0; idx < lines.length; idx++) {
       final ln  = lines[idx];
       final sel = idx == selIdx;
@@ -2312,28 +2550,187 @@ class _Painter extends CustomPainter {
           case LineStyle.dotted: _dotted(canvas, p1, p2, col, w);
         }
       }
+      void lbl(String t, Color c, double x, double y) {
+        final tp = TextPainter(text: TextSpan(text: t, style: TextStyle(color: c, fontSize: 9)),
+            textDirection: TextDirection.ltr)..layout();
+        tp.paint(canvas, Offset(x, y));
+      }
+
+      // ── 새 드로잉 툴 렌더링 ────────────────────────────────────────────────
+      if (ln.drawType == DrawTool.brush && ln.pts.length >= 2) {
+        final path = Path();
+        for (int i = 0; i < ln.pts.length; i++) {
+          final x = txToX(ln.pts[i].time), y = pyFn(ln.pts[i].price);
+          if (i == 0) path.moveTo(x, y); else path.lineTo(x, y);
+        }
+        canvas.drawPath(path, Paint()..color = col..strokeWidth = w * 1.5
+          ..style = PaintingStyle.stroke
+          ..strokeJoin = StrokeJoin.round..strokeCap = StrokeCap.round);
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.crossLine) {
+        final x = txToX(ln.startTime), y = pyFn(ln.startPrice);
+        if (y >= -1 && y <= pH + 1) seg(Offset(0, y), Offset(chartW, y));
+        seg(Offset(x, 0), Offset(x, pH));
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.text || ln.drawType == DrawTool.note ||
+          ln.drawType == DrawTool.priceNote) {
+        final txt = ln.text ?? '';
+        if (txt.isEmpty) { continue; }
+        final x = txToX(ln.startTime), y = pyFn(ln.startPrice);
+        final display = ln.drawType == DrawTool.priceNote ? '${_fmt(ln.startPrice)}\n$txt' : txt;
+        final tp = TextPainter(
+          text: TextSpan(text: display, style: TextStyle(color: col, fontSize: 11)),
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: 140);
+        final tx = (x - tp.width / 2).clamp(2.0, chartW - tp.width - 4);
+        final ty = (y - tp.height - 10).clamp(2.0, pH - tp.height - 2);
+        if (ln.drawType != DrawTool.text) {
+          final bg = RRect.fromRectAndRadius(
+            Rect.fromLTWH(tx - 4, ty - 3, tp.width + 8, tp.height + 6),
+            const Radius.circular(4));
+          canvas.drawRRect(bg, Paint()..color = col.withValues(alpha: 0.12));
+          canvas.drawRRect(bg, Paint()..color = col.withValues(alpha: 0.4)
+            ..style = PaintingStyle.stroke..strokeWidth = 0.8);
+          canvas.drawLine(Offset(x, y), Offset(tx + tp.width / 2, ty + tp.height + 3),
+              Paint()..color = col.withValues(alpha: 0.5)..strokeWidth = 0.8);
+          canvas.drawCircle(Offset(x, y), 2.5, Paint()..color = col);
+        }
+        tp.paint(canvas, Offset(tx, ty));
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.parallelChannel && ln.pts.length >= 3) {
+        final x0 = txToX(ln.pts[0].time), y0 = pyFn(ln.pts[0].price);
+        final x1 = txToX(ln.pts[1].time), y1 = pyFn(ln.pts[1].price);
+        final dy  = pyFn(ln.pts[2].price) - y0;
+        seg(Offset(x0, y0), Offset(x1, y1));
+        seg(Offset(x0, y0 + dy), Offset(x1, y1 + dy));
+        _dashed(canvas, Offset(x0, y0 + dy / 2), Offset(x1, y1 + dy / 2),
+            Paint()..color = col.withValues(alpha: 0.3)..strokeWidth = w * 0.6
+              ..style = PaintingStyle.stroke);
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.fibRetracement && ln.pts.length >= 2) {
+        final p0 = ln.pts[0], p1 = ln.pts[1];
+        seg(Offset(txToX(p0.time), pyFn(p0.price)), Offset(txToX(p1.time), pyFn(p1.price)));
+        const lvs = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
+        const lbs = ['0', '0.236', '0.382', '0.5', '0.618', '0.786', '1.0'];
+        for (int i = 0; i < lvs.length; i++) {
+          final py = pyFn(p0.price + (p1.price - p0.price) * lvs[i]);
+          if (py < -1 || py > pH + 1) continue;
+          canvas.drawLine(Offset(0, py), Offset(chartW, py),
+              Paint()..color = col.withValues(alpha: i == 0 || i == 6 ? 0.7 : 0.4)..strokeWidth = 0.8);
+          lbl(lbs[i], col.withValues(alpha: 0.8), chartW - 36, py - 11);
+        }
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.fibExtension && ln.pts.length >= 3) {
+        final p0 = ln.pts[0], p1 = ln.pts[1], p2 = ln.pts[2];
+        seg(Offset(txToX(p0.time), pyFn(p0.price)), Offset(txToX(p1.time), pyFn(p1.price)));
+        seg(Offset(txToX(p1.time), pyFn(p1.price)), Offset(txToX(p2.time), pyFn(p2.price)));
+        final swing = p1.price - p0.price;
+        const lvs = [0.0, 0.618, 1.0, 1.618, 2.618];
+        const lbs = ['0', '0.618', '1.0', '1.618', '2.618'];
+        for (int i = 0; i < lvs.length; i++) {
+          final py = pyFn(p2.price + swing * lvs[i]);
+          if (py < -1 || py > pH + 1) continue;
+          canvas.drawLine(Offset(0, py), Offset(chartW, py),
+              Paint()..color = col.withValues(alpha: 0.45)..strokeWidth = 0.8);
+          lbl(lbs[i], col.withValues(alpha: 0.8), chartW - 36, py - 11);
+        }
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.fibTimeZone && ln.pts.length >= 2) {
+        final t0 = ln.pts[0].time, t1 = ln.pts[1].time;
+        final base = (t1 - t0).abs();
+        if (base == 0) { continue; }
+        canvas.drawLine(Offset(txToX(t0), 0), Offset(txToX(t0), pH),
+            Paint()..color = col.withValues(alpha: 0.6)..strokeWidth = 0.8);
+        const fibs = [1, 2, 3, 5, 8, 13, 21, 34];
+        for (final f in fibs) {
+          final xt = txToX(t0 + f * base);
+          if (xt < -2 || xt > chartW + 2) continue;
+          canvas.drawLine(Offset(xt, 0), Offset(xt, pH),
+              Paint()..color = col.withValues(alpha: 0.4)..strokeWidth = 0.8);
+          lbl('$f', col.withValues(alpha: 0.7), xt + 2, 2);
+        }
+        continue;
+      }
+
+      if ((ln.drawType == DrawTool.headAndShoulders || ln.drawType == DrawTool.xabcdPattern)
+          && ln.pts.length >= 5) {
+        final labels = ln.drawType == DrawTool.headAndShoulders
+            ? ['LS', 'LN', 'H', 'RN', 'RS'] : ['X', 'A', 'B', 'C', 'D'];
+        final offs = ln.pts.take(5).map((p) => Offset(txToX(p.time), pyFn(p.price))).toList();
+        for (int i = 0; i < offs.length - 1; i++) seg(offs[i], offs[i + 1]);
+        if (ln.drawType == DrawTool.headAndShoulders) {
+          _dashed(canvas, offs[1], offs[3], Paint()..color = col.withValues(alpha: 0.5)
+            ..strokeWidth = 0.8..style = PaintingStyle.stroke);
+        }
+        for (int i = 0; i < labels.length; i++) {
+          canvas.drawCircle(offs[i], 3.5, Paint()..color = col.withValues(alpha: 0.3));
+          final tp = TextPainter(
+            text: TextSpan(text: labels[i], style: TextStyle(color: col, fontSize: 9, fontWeight: FontWeight.bold)),
+            textDirection: TextDirection.ltr,
+          )..layout();
+          tp.paint(canvas, offs[i] + Offset(-tp.width / 2, -15));
+        }
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.elliottWave && ln.pts.length >= 6) {
+        final offs = ln.pts.take(6).map((p) => Offset(txToX(p.time), pyFn(p.price))).toList();
+        for (int i = 0; i < offs.length - 1; i++) seg(offs[i], offs[i + 1]);
+        for (int i = 1; i < offs.length; i++) {
+          canvas.drawCircle(offs[i], 8, Paint()..color = col.withValues(alpha: 0.18));
+          canvas.drawCircle(offs[i], 8, Paint()..color = col.withValues(alpha: 0.4)
+            ..style = PaintingStyle.stroke..strokeWidth = 0.8);
+          final tp = TextPainter(
+            text: TextSpan(text: '$i', style: TextStyle(color: col, fontSize: 9, fontWeight: FontWeight.bold)),
+            textDirection: TextDirection.ltr,
+          )..layout();
+          tp.paint(canvas, offs[i] + Offset(-tp.width / 2, -tp.height / 2));
+        }
+        continue;
+      }
+
+      if ((ln.drawType == DrawTool.longPosition || ln.drawType == DrawTool.shortPosition)
+          && ln.pts.length >= 2) {
+        final isLong = ln.drawType == DrawTool.longPosition;
+        final x0 = txToX(ln.pts[0].time), x1 = txToX(ln.pts[1].time);
+        final yEntry  = pyFn(ln.pts[0].price), yTarget = pyFn(ln.pts[1].price);
+        final zoneCol = isLong ? const Color(0xFF26A69A) : const Color(0xFFEF5350);
+        final rect = Rect.fromLTRB(
+          math.min(x0, x1), math.min(yEntry, yTarget),
+          math.max(x0, x1), math.max(yEntry, yTarget));
+        canvas.drawRect(rect, Paint()..color = zoneCol.withValues(alpha: 0.12));
+        canvas.drawLine(Offset(math.min(x0,x1), yEntry), Offset(math.max(x0,x1), yEntry),
+            Paint()..color = Colors.white54..strokeWidth = 1.0);
+        canvas.drawLine(Offset(math.min(x0,x1), yTarget), Offset(math.max(x0,x1), yTarget),
+            Paint()..color = zoneCol..strokeWidth = 1.5);
+        final lx = (math.max(x0, x1) + 4).clamp(0.0, chartW - 48.0);
+        lbl('진입', Colors.white54, lx, yEntry - 11);
+        lbl('목표가', zoneCol, lx, yTarget - 11);
+        final pct = (ln.pts[1].price - ln.pts[0].price) / ln.pts[0].price * 100;
+        final pctStr = (isLong ? '+' : '') + pct.toStringAsFixed(1) + '%';
+        lbl(pctStr, zoneCol,
+            (math.min(x0,x1) + math.max(x0,x1)) / 2 - 12,
+            (yEntry + yTarget) / 2 - 6);
+        continue;
+      }
+
+      // ── 기존: trendLine + isHorizontal ────────────────────────────────────
       if (ln.isHorizontal) {
         final y = pyFn(ln.startPrice);
         if (y >= -1 && y <= pH + 1) { seg(Offset(0, y), Offset(chartW, y)); }
         continue;
-      }
-      double txToX(int t) {
-        if (vc.isEmpty) return 0;
-        final avg = vc.length >= 2
-            ? (vc.last.time - vc.first.time) / (vc.length - 1) : 86400.0;
-        if (t <= vc.first.time) {
-          return (rp + 0.5 - (vc.first.time - t) / avg) * cw;
-        }
-        if (t >= vc.last.time) {
-          return (rp + vc.length - 0.5 + (t - vc.last.time) / avg) * cw;
-        }
-        for (int i = 0; i < vc.length - 1; i++) {
-          if (t < vc[i + 1].time) {
-            final frac = (t - vc[i].time) / (vc[i + 1].time - vc[i].time);
-            return (rp + i + frac + 0.5) * cw;
-          }
-        }
-        return (rp + vc.length - 0.5) * cw;
       }
       final x1 = txToX(ln.startTime); final y1 = pyFn(ln.startPrice);
       final x2 = txToX(ln.endTime);   final y2 = pyFn(ln.endPrice);
@@ -2345,7 +2742,6 @@ class _Painter extends CustomPainter {
               Paint()..color = ln.color..strokeWidth = 1..style = PaintingStyle.stroke);
         }
       }
-      // 역할 라벨 (역할 있는 선만)
       if (ln.role != LineRole.none) {
         final labelX = x2.clamp(4.0, chartW - 52.0);
         final labelY = (y2 - 18).clamp(2.0, pH - 16.0);
@@ -2361,11 +2757,9 @@ class _Painter extends CustomPainter {
           Rect.fromLTWH(labelX - 3, labelY - 2, tp.width + 6, tp.height + 4),
           const Radius.circular(3),
         );
-        canvas.drawRRect(bgRect,
-            Paint()..color = roleColor.withValues(alpha: 0.18));
-        canvas.drawRRect(bgRect,
-            Paint()..color = roleColor.withValues(alpha: 0.5)
-              ..style = PaintingStyle.stroke..strokeWidth = 0.8);
+        canvas.drawRRect(bgRect, Paint()..color = roleColor.withValues(alpha: 0.18));
+        canvas.drawRRect(bgRect, Paint()..color = roleColor.withValues(alpha: 0.5)
+          ..style = PaintingStyle.stroke..strokeWidth = 0.8);
         tp.paint(canvas, Offset(labelX, labelY));
       }
     }
@@ -2465,6 +2859,19 @@ class _Painter extends CustomPainter {
     return v.toStringAsFixed(0);
   }
 
+  static double _txToX(int t, List<CandleData> vc, double cw, double rp) {
+    if (vc.isEmpty) return 0;
+    final avg = vc.length >= 2 ? (vc.last.time - vc.first.time) / (vc.length - 1) : 86400.0;
+    if (t <= vc.first.time) return (rp + 0.5 - (vc.first.time - t) / avg) * cw;
+    if (t >= vc.last.time)  return (rp + vc.length - 0.5 + (t - vc.last.time) / avg) * cw;
+    for (int i = 0; i < vc.length - 1; i++) {
+      if (t < vc[i + 1].time) {
+        return (rp + i + (t - vc[i].time) / (vc[i + 1].time - vc[i].time) + 0.5) * cw;
+      }
+    }
+    return (rp + vc.length - 0.5) * cw;
+  }
+
   @override
   bool shouldRepaint(_Painter o) =>
       candles != o.candles || vis != o.vis || scroll != o.scroll ||
@@ -2472,5 +2879,153 @@ class _Painter extends CustomPainter {
       activeIndicators != o.activeIndicators || indConfigs != o.indConfigs ||
       lines != o.lines || selIdx != o.selIdx ||
       phase != o.phase || cursor != o.cursor ||
-      fpTime != o.fpTime || fpPrice != o.fpPrice;
+      fpTime != o.fpTime || fpPrice != o.fpPrice ||
+      currentTool != o.currentTool || pendingPts != o.pendingPts ||
+      brushPending != o.brushPending;
+}
+
+// ─── Drawing Tool Picker ──────────────────────────────────────────────────────
+
+enum _DrawCategory {
+  trendLine, fibonacci, pattern, forecast, geometric, annotation;
+  String get label {
+    switch (this) {
+      case _DrawCategory.trendLine:  return '트렌드 라인';
+      case _DrawCategory.fibonacci:  return '간과 피보나치';
+      case _DrawCategory.pattern:    return '패턴';
+      case _DrawCategory.forecast:   return '예측 및 측정';
+      case _DrawCategory.geometric:  return '기하 도형';
+      case _DrawCategory.annotation: return '주석';
+    }
+  }
+}
+
+class _DrawToolMeta {
+  final DrawTool tool;
+  final String name;
+  final IconData icon;
+  final _DrawCategory category;
+  const _DrawToolMeta(this.tool, this.name, this.icon, this.category);
+}
+
+const _kDrawToolMetas = <_DrawToolMeta>[
+  _DrawToolMeta(DrawTool.trendLine,        '추세선',         Icons.show_chart,         _DrawCategory.trendLine),
+  _DrawToolMeta(DrawTool.crossLine,        '크로스 라인',    Icons.add,                _DrawCategory.trendLine),
+  _DrawToolMeta(DrawTool.parallelChannel,  '패러렐 채널',    Icons.horizontal_rule,    _DrawCategory.trendLine),
+  _DrawToolMeta(DrawTool.fibRetracement,   '피보나치\n되돌림', Icons.stacked_line_chart, _DrawCategory.fibonacci),
+  _DrawToolMeta(DrawTool.fibExtension,     '피보나치\n확장',  Icons.trending_up,        _DrawCategory.fibonacci),
+  _DrawToolMeta(DrawTool.fibTimeZone,      '피보나치\n타임존', Icons.view_week,          _DrawCategory.fibonacci),
+  _DrawToolMeta(DrawTool.headAndShoulders, '헤드 앤\n숄더',  Icons.hdr_strong,         _DrawCategory.pattern),
+  _DrawToolMeta(DrawTool.elliottWave,      '엘리엇\n임펄스', Icons.ssid_chart,         _DrawCategory.pattern),
+  _DrawToolMeta(DrawTool.xabcdPattern,     'XABCD\n패턴',   Icons.scatter_plot,       _DrawCategory.pattern),
+  _DrawToolMeta(DrawTool.longPosition,     '롱 포지션',      Icons.arrow_upward,       _DrawCategory.forecast),
+  _DrawToolMeta(DrawTool.shortPosition,    '숏 포지션',      Icons.arrow_downward,     _DrawCategory.forecast),
+  _DrawToolMeta(DrawTool.brush,            '붓',             Icons.brush,              _DrawCategory.geometric),
+  _DrawToolMeta(DrawTool.text,             '텍스트',         Icons.text_fields,        _DrawCategory.annotation),
+  _DrawToolMeta(DrawTool.note,             '노트',           Icons.sticky_note_2,      _DrawCategory.annotation),
+  _DrawToolMeta(DrawTool.priceNote,        '프라이스\n노트', Icons.price_check,        _DrawCategory.annotation),
+];
+
+class _DrawingPickerSheet extends StatefulWidget {
+  final DrawTool activeTool;
+  final void Function(DrawTool) onToolSelected;
+  const _DrawingPickerSheet({required this.activeTool, required this.onToolSelected});
+  @override
+  State<_DrawingPickerSheet> createState() => _DrawingPickerSheetState();
+}
+
+class _DrawingPickerSheetState extends State<_DrawingPickerSheet>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabCtrl;
+  static const _cats = _DrawCategory.values;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabCtrl = TabController(length: _cats.length, vsync: this);
+    // 현재 활성 툴의 카테고리 탭으로 자동 이동
+    final catIdx = _cats.indexWhere((c) =>
+        _kDrawToolMetas.any((m) => m.tool == widget.activeTool && m.category == c));
+    if (catIdx >= 0) _tabCtrl.index = catIdx;
+  }
+
+  @override
+  void dispose() { _tabCtrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext ctx) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.62, minChildSize: 0.4, maxChildSize: 0.88,
+      expand: false,
+      builder: (context, _) => Column(children: [
+        Container(
+          margin: const EdgeInsets.symmetric(vertical: 10),
+          width: 36, height: 4,
+          decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+          child: Align(alignment: Alignment.centerLeft,
+              child: Text('그리기 도구', style: TextStyle(
+                  color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold))),
+        ),
+        TabBar(
+          controller: _tabCtrl,
+          isScrollable: true,
+          labelColor: AppColors.green,
+          unselectedLabelColor: Colors.white54,
+          indicatorColor: AppColors.green,
+          indicatorSize: TabBarIndicatorSize.label,
+          labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+          unselectedLabelStyle: const TextStyle(fontSize: 11),
+          tabs: _cats.map((c) => Tab(text: c.label)).toList(),
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _tabCtrl,
+            children: _cats.map((cat) {
+              final tools = _kDrawToolMetas.where((m) => m.category == cat).toList();
+              return GridView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3, crossAxisSpacing: 10,
+                  mainAxisSpacing: 10, childAspectRatio: 1.0,
+                ),
+                itemCount: tools.length,
+                itemBuilder: (_, i) {
+                  final meta   = tools[i];
+                  final active = meta.tool == widget.activeTool;
+                  return GestureDetector(
+                    onTap: () => widget.onToolSelected(meta.tool),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: active
+                            ? AppColors.green.withValues(alpha: 0.12)
+                            : const Color(0xFF252A34),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: active
+                              ? AppColors.green.withValues(alpha: 0.55)
+                              : Colors.white12,
+                        ),
+                      ),
+                      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Icon(meta.icon,
+                            color: active ? AppColors.green : Colors.white70, size: 26),
+                        const SizedBox(height: 6),
+                        Text(meta.name, textAlign: TextAlign.center, style: TextStyle(
+                          color: active ? AppColors.green : Colors.white70,
+                          fontSize: 10, fontWeight: FontWeight.w500,
+                        )),
+                      ]),
+                    ),
+                  );
+                },
+              );
+            }).toList(),
+          ),
+        ),
+      ]),
+    );
+  }
 }

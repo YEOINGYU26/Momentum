@@ -106,6 +106,12 @@ class TestJobManagement:
 
 
 class TestExecution:
+    @pytest.fixture(autouse=True)
+    def mock_market_open(self):
+        # 테스트는 장중/장외 무관하게 실행되므로 항상 정규장으로 간주
+        with patch("app.services.scheduler.is_market_open", return_value=True):
+            yield
+
     @pytest.mark.asyncio
     async def test_hold_signal_no_order(self):
         sched, market_api, orders_api, notifier, mock_strategy = _make_scheduler(Signal.HOLD)

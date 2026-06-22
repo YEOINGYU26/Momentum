@@ -5,8 +5,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 
 from app.core.dependencies import get_market_api
-from app.data.symbols import search_symbols
+from app.data.symbols import search_symbols, is_us_ticker
 from app.kis import master as stock_master
+from app.kis import us_master
 from app.kis.market import MarketAPI
 
 router = APIRouter(prefix="/market", tags=["market"])
@@ -84,29 +85,61 @@ async def search(q: str = "", category: str = "전체"):
             if category in ("전체", "주식")
         ]
 
-    # 해외주식 + 암호화폐: symbols.py 사용
-    others = [
-        {
-            "ticker":   s.ticker,
-            "name":     s.name,
-            "sub":      s.sub,
-            "exchange": s.exchange,
-            "category": s.category,
-        }
-        for s in search_symbols(q, category)
-        if s.category != "주식"
-    ]
+    # 해외주식: 마스터 캐시 우선(수만 종목), 미로드 시 symbols.py 폴백
+    us_results: list[dict] = []
+    if category in ("전체", "해외주식"):
+        if us_master.is_loaded():
+            us_results = [
+                {
+                    "ticker":   it.ticker,
+                    "name":     it.name,
+                    "sub":      it.name,
+                    "exchange": it.exchange,
+                    "category": "해외주식",
+                }
+                for it in us_master.search(q, limit=50)
+            ]
+        else:
+            us_results = [
+                {
+                    "ticker":   s.ticker,
+                    "name":     s.name,
+                    "sub":      s.sub,
+                    "exchange": s.exchange,
+                    "category": s.category,
+                }
+                for s in search_symbols(q, "해외주식")
+            ]
+
+    # 암호화폐: symbols.py 사용
+    crypto_results: list[dict] = []
+    if category in ("전체", "암호화폐"):
+        crypto_results = [
+            {
+                "ticker":   s.ticker,
+                "name":     s.name,
+                "sub":      s.sub,
+                "exchange": s.exchange,
+                "category": s.category,
+            }
+            for s in search_symbols(q, "암호화폐")
+        ]
 
     if category == "주식":
         return korean
-    if category in ("해외주식", "암호화폐"):
-        return others
-    return korean + others
+    if category == "해외주식":
+        return us_results
+    if category == "암호화폐":
+        return crypto_results
+    return korean + us_results + crypto_results
 
 
 @router.get("/price/{ticker}")
 async def get_price(ticker: str, api: MarketAPI = Depends(get_market_api)):
     return await api.get_price(ticker)
+
+
+_US_GUBN_MAP = {"D": "0", "W": "1", "M": "2"}
 
 
 @router.get("/ohlcv/{ticker}")
@@ -119,16 +152,33 @@ async def get_ohlcv(
         return cached
 
     try:
-        if interval == "all":
-            result = await api.get_daily_ohlcv_all(ticker, "D")   # max 100콜
-        elif interval == "1y":
-            result = await api.get_yearly_ohlcv(ticker)
-        elif interval in _PERIOD_MAP:
-            period, pages = _PERIOD_MAP[interval]
-            result = await api.get_daily_ohlcv_all(ticker, period, max_pages=pages)
+        if is_us_ticker(ticker):
+            # ── 해외주식 OHLCV ──────────────────────────────────────────
+            exchange = us_master.lookup_exchange(ticker)
+            if interval == "all":
+                result = await api.get_us_ohlcv_all(ticker, exchange, "0", max_pages=100)
+            elif interval == "1y":
+                monthly = await api.get_us_ohlcv_all(ticker, exchange, "2", max_pages=10)
+                result = _aggregate_yearly_us(monthly)
+            elif interval in _PERIOD_MAP:
+                period, pages = _PERIOD_MAP[interval]
+                gubn = _US_GUBN_MAP.get(period, "0")
+                result = await api.get_us_ohlcv_all(ticker, exchange, gubn, max_pages=pages)
+            else:
+                # 분봉 미지원 — 일봉 5페이지로 대체
+                result = await api.get_us_ohlcv_all(ticker, exchange, "0", max_pages=5)
         else:
-            minutes, calls = _MINUTE_MAP.get(interval, (1, 1))
-            result = await api.get_minute_ohlcv(ticker, interval_minutes=minutes, calls=calls)
+            # ── 국내주식 OHLCV ──────────────────────────────────────────
+            if interval == "all":
+                result = await api.get_daily_ohlcv_all(ticker, "D")
+            elif interval == "1y":
+                result = await api.get_yearly_ohlcv(ticker)
+            elif interval in _PERIOD_MAP:
+                period, pages = _PERIOD_MAP[interval]
+                result = await api.get_daily_ohlcv_all(ticker, period, max_pages=pages)
+            else:
+                minutes, calls = _MINUTE_MAP.get(interval, (1, 1))
+                result = await api.get_minute_ohlcv(ticker, interval_minutes=minutes, calls=calls)
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(f"OHLCV 실패 {ticker} interval={interval}: {e}")
@@ -137,3 +187,22 @@ async def get_ohlcv(
     if result:
         _cache_set(ticker, interval, result)
     return result
+
+
+def _aggregate_yearly_us(monthly: list[dict]) -> list[dict]:
+    yearly: dict[str, dict] = {}
+    for r in monthly:
+        year = r["date"][:4]
+        if year not in yearly:
+            yearly[year] = {
+                "date": year + "0101",
+                "open": r["open"], "high": r["high"],
+                "low":  r["low"],  "close": r["close"],
+                "volume": r["volume"],
+            }
+        else:
+            yearly[year]["high"]   = max(yearly[year]["high"], r["high"])
+            yearly[year]["low"]    = min(yearly[year]["low"],  r["low"])
+            yearly[year]["close"]  = r["close"]
+            yearly[year]["volume"] += r["volume"]
+    return sorted(yearly.values(), key=lambda r: r["date"])

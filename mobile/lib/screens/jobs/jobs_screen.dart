@@ -222,6 +222,7 @@ class _AddJobDialogState extends State<_AddJobDialog> {
         ticker: ticker,
         strategyName: _strategy,
         intervalSeconds: int.tryParse(_intervalCtrl.text) ?? 60,
+        quantity: 1,
       );
       if (mounted) Navigator.pop(context);
     } catch (e) {

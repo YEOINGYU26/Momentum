@@ -4,8 +4,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from app.kis.market import MarketAPI
-from app.kis.market_hours import is_market_open
+from app.kis.market_hours import market_status, is_us_market_open
 from app.kis.orders import OrdersAPI
+from app.data.symbols import is_us_ticker
+from app.kis import us_master
 from app.services.push import PushNotifier
 
 logger = logging.getLogger(__name__)
@@ -25,7 +27,7 @@ def _tick_unit(price: int) -> int:
 @dataclass
 class PriceAlert:
     ticker: str
-    target_price: int       # 고정가 알람용 (추세선 알람은 0 전달)
+    target_price: float     # 고정가 알람용 — KRW(int형 float) 또는 USD(소수점). 추세선은 0 전달.
     side: str               # "buy" | "sell"
     quantity: int
     active: bool = True
@@ -40,16 +42,16 @@ class PriceAlert:
     def is_trendline(self) -> bool:
         return self.line_start_time is not None
 
-    def effective_target(self, now_ts: int) -> int:
+    def effective_target(self, now_ts: int) -> float:
         """현재 시각의 유효 목표가 반환 (추세선이면 선형 보간/외삽)"""
         if not self.is_trendline:
-            return self.target_price
+            return float(self.target_price)
         t0, p0 = self.line_start_time, self.line_start_price
         t1, p1 = self.line_end_time,   self.line_end_price
         if t1 == t0:
-            return int(p0)
+            return float(p0)
         frac = (now_ts - t0) / (t1 - t0)
-        return int(p0 + frac * (p1 - p0))
+        return p0 + frac * (p1 - p0)
 
 
 @dataclass
@@ -87,18 +89,28 @@ class PriceMonitorService:
         return list(self._state.alerts)
 
     async def _check_once(self) -> None:
-        if not is_market_open():
-            return  # 장외시간 — 시세 조회·주문 모두 스킵
-        active = [a for a in self._state.alerts if a.active and not a.triggered]
+        kr_status = market_status()
+        us_open   = is_us_market_open()
+
+        all_active = [a for a in self._state.alerts if a.active and not a.triggered]
+        if not all_active:
+            return
+
+        # 현재 거래 가능한 알림만 필터
+        active = [
+            a for a in all_active
+            if (is_us_ticker(a.ticker) and us_open)
+            or (not is_us_ticker(a.ticker) and kr_status in ("open", "pre_market", "after_hours"))
+        ]
         if not active:
             return
 
         tickers = list({a.ticker for a in active})
-        prices: dict[str, int] = {}
+        prices: dict[str, float] = {}
         for ticker in tickers:
             try:
                 data = await self._market.get_price(ticker)
-                prices[ticker] = data["current_price"]
+                prices[ticker] = float(data["current_price"])
             except Exception as e:
                 logger.warning("시세 조회 실패 %s: %s", ticker, e)
 
@@ -110,9 +122,6 @@ class PriceMonitorService:
             if price is None:
                 continue
             target = alert.effective_target(now_ts)
-            # KIS 호가 단위에 맞게 반올림
-            tick = _tick_unit(target)
-            order_price = round(target / tick) * tick
             hit = (
                 (alert.side == "buy"  and price <= target)
                 or (alert.side == "sell" and price >= target)
@@ -122,19 +131,57 @@ class PriceMonitorService:
 
             alert.triggered = True
             kind = "추세선" if alert.is_trendline else "지정가"
-            logger.info("%s 도달 — %s %s %d주 @ %d (목표 %d → 주문가 %d)",
-                        kind, alert.side, alert.ticker, alert.quantity, price, target, order_price)
-            try:
-                if alert.side == "buy":
-                    result = await self._orders.buy_limit(alert.ticker, alert.quantity, order_price)
-                else:
-                    result = await self._orders.sell_limit(alert.ticker, alert.quantity, order_price)
-                await self._notifier.notify_order(alert.side, alert.ticker, price, alert.quantity)
-                logger.info("주문 완료: %s", result)
-            except Exception as e:
-                alert.triggered = False
-                logger.error("주문 실패: %s", e)
-                await self._notifier.notify_error(str(e))
+
+            if is_us_ticker(alert.ticker):
+                # 해외주식 — USD, 소수점 2자리 반올림
+                order_price_f = round(target, 2)
+                exchange = us_master.lookup_exchange(alert.ticker)
+                logger.info("%s 도달 [US] — %s %s %d주 @ %.2f (목표 %.2f → 주문가 %.2f)",
+                            kind, alert.side, alert.ticker, alert.quantity,
+                            price, target, order_price_f)
+                try:
+                    if alert.side == "buy":
+                        result = await self._orders.buy_us_limit(
+                            alert.ticker, alert.quantity, order_price_f, exchange
+                        )
+                    else:
+                        result = await self._orders.sell_us_limit(
+                            alert.ticker, alert.quantity, order_price_f, exchange
+                        )
+                    await self._notifier.notify_order(
+                        alert.side, alert.ticker, price, alert.quantity
+                    )
+                    logger.info("주문 완료: %s", result)
+                except Exception as e:
+                    alert.triggered = False
+                    logger.error("주문 실패: %s", e)
+                    await self._notifier.notify_error(str(e))
+            else:
+                # 국내주식 — KRW, KIS 호가 단위 반올림
+                tick = _tick_unit(int(target))
+                order_price_i = round(target / tick) * tick
+                logger.info("%s 도달 [%s] — %s %s %d주 @ %d (목표 %.0f → 주문가 %d)",
+                            kind, kr_status, alert.side, alert.ticker, alert.quantity,
+                            price, target, order_price_i)
+                try:
+                    if kr_status == "pre_market":
+                        order_fn = self._orders.buy_pre_market if alert.side == "buy" \
+                            else self._orders.sell_pre_market
+                    elif kr_status == "after_hours":
+                        order_fn = self._orders.buy_after_hours if alert.side == "buy" \
+                            else self._orders.sell_after_hours
+                    else:
+                        order_fn = self._orders.buy_limit if alert.side == "buy" \
+                            else self._orders.sell_limit
+                    result = await order_fn(alert.ticker, alert.quantity, order_price_i)
+                    await self._notifier.notify_order(
+                        alert.side, alert.ticker, price, alert.quantity
+                    )
+                    logger.info("주문 완료: %s", result)
+                except Exception as e:
+                    alert.triggered = False
+                    logger.error("주문 실패: %s", e)
+                    await self._notifier.notify_error(str(e))
 
     async def _loop(self) -> None:
         logger.info("가격 모니터링 시작 (간격: %ss)", self._interval)
