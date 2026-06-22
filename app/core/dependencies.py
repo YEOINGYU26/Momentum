@@ -5,6 +5,7 @@ from app.kis.client import KISClient
 from app.kis.market import MarketAPI
 from app.kis.orders import OrdersAPI
 from app.kis.account import AccountAPI
+from app.services.condition_service import ConditionService
 from app.services.push import PushNotifier
 from app.services.price_monitor import PriceMonitorService
 from app.services.realtime import RealtimeService
@@ -53,6 +54,15 @@ def get_realtime_service() -> RealtimeService:
 @lru_cache
 def get_scheduler() -> StrategyScheduler:
     return StrategyScheduler(
+        market_api=get_market_api(),
+        orders_api=get_orders_api(),
+        notifier=get_push_notifier(),
+    )
+
+
+@lru_cache
+def get_condition_service() -> ConditionService:
+    return ConditionService(
         market_api=get_market_api(),
         orders_api=get_orders_api(),
         notifier=get_push_notifier(),

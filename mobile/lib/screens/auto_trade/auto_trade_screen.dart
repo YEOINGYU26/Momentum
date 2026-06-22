@@ -8,10 +8,11 @@ import '../../core/app_colors.dart';
 import '../../core/constants.dart';
 import '../../models/chart_line_info.dart';
 import '../../models/price_alert_model.dart';
-import '../../models/scheduler_job.dart';
 import '../../providers/job_provider.dart';
 import '../../providers/alert_provider.dart';
 import '../../providers/chart_provider.dart';
+import '../../providers/condition_provider.dart';
+import '../../models/compound_condition_model.dart';
 import '../../services/market_data_service.dart';
 import '../../main.dart';
 import '../home/mini_chart_sheet.dart';
@@ -46,6 +47,7 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<JobProvider>().fetchJobs();
       context.read<AlertProvider>().fetchAlerts();
+      context.read<ConditionProvider>().fetchRules();
     });
   }
 
@@ -376,27 +378,25 @@ class _ConditionTradeTab extends StatefulWidget {
 }
 
 class _ConditionTradeTabState extends State<_ConditionTradeTab> {
-  // ── 매매선 트리거 ──
-  int  _lineBuyQty    = 10;
-  int  _lineSellQty   = 10;
-  bool _submittingBuy  = false;
-  bool _submittingSell = false;
+  // 거래 방향
+  String _side = 'buy';
 
-  // ── 지표 조건 ──
-  String _indicator    = 'rsi';
-  String _timeframe    = 'D';
-  int    _indQty       = 10;
-  int    _intervalSec  = 60;
-  int    _rsiBuyThr    = 30;
-  int    _rsiSellThr   = 70;
-  bool   _submittingInd = false;
+  // 조건 토글
+  bool _useLineTrigger = false;
+  bool _useRsi         = false;
+  bool _useMaCross     = false;
+  bool _useBollinger   = false;
+  bool _useIchimoku    = false;
 
-  static const _indicators = [
-    _IndMeta(id: 'rsi',            name: 'RSI',       badge: 'RSI(14)',   icon: Icons.show_chart,      color: AppColors.green,        buyDesc: 'RSI 과매도 기준 이하 매수',   sellDesc: 'RSI 과매수 기준 이상 매도'),
-    _IndMeta(id: 'moving_average', name: '골든크로스', badge: 'MA 5/20',  icon: Icons.trending_up,     color: Color(0xFFF2B41E),      buyDesc: '단기MA가 장기MA 상향 돌파 시 매수', sellDesc: '단기MA가 장기MA 하향 돌파 시 매도'),
-    _IndMeta(id: 'scalping',       name: '볼린저밴드', badge: 'BB(20,2)', icon: Icons.speed,            color: Color(0xFF6C63FF),      buyDesc: '볼린저 하단(−2σ) 이탈 시 매수', sellDesc: '볼린저 상단(+2σ) 도달 시 매도'),
-    _IndMeta(id: 'ichimoku',       name: '이치모쿠',   badge: 'Ichimoku', icon: Icons.layers_outlined,  color: Color(0xFF00BCD4),      buyDesc: '구름대 하단 지지선 근접 시 매수', sellDesc: '구름대 상단 저항선 도달 시 매도'),
-  ];
+  // RSI 기준값
+  int _rsiBuyThr  = 30;
+  int _rsiSellThr = 70;
+
+  // 공통 설정
+  String _timeframe   = 'D';
+  int    _qty         = 10;
+  int    _intervalSec = 60;
+  bool   _submitting  = false;
 
   static const _timeframes = [
     (label: '일봉', value: 'D'),
@@ -404,7 +404,6 @@ class _ConditionTradeTabState extends State<_ConditionTradeTab> {
     (label: '월봉', value: 'M'),
     (label: '1년봉', value: 'Y'),
   ];
-
   static const _intervals = [
     (label: '30초', sec: 30),
     (label: '1분',  sec: 60),
@@ -412,17 +411,27 @@ class _ConditionTradeTabState extends State<_ConditionTradeTab> {
     (label: '15분', sec: 900),
     (label: '1시간', sec: 3600),
   ];
+  static const _rsiBuyOpts  = [20, 25, 30, 35];
+  static const _rsiSellOpts = [65, 70, 75, 80];
 
-  static const _rsiBuyOptions  = [20, 25, 30, 35];
-  static const _rsiSellOptions = [65, 70, 75, 80];
+  bool get _isBuy => _side == 'buy';
+  Color get _sideColor => _isBuy ? const Color(0xFF26A69A) : AppColors.red;
 
-  void _snack(String msg, {bool success = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor: success ? AppColors.green : AppColors.red,
-      behavior: SnackBarBehavior.floating,
-    ));
+  int get _activeCount {
+    int n = 0;
+    if (_useLineTrigger) n++;
+    if (_useRsi)         n++;
+    if (_useMaCross)     n++;
+    if (_useBollinger)   n++;
+    return n;
   }
+
+  void _snack(String msg, {bool success = false}) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(msg),
+        backgroundColor: success ? AppColors.green : AppColors.red,
+        behavior: SnackBarBehavior.floating,
+      ));
 
   String _linePriceLabel(ChartLineInfo l) {
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
@@ -430,52 +439,30 @@ class _ConditionTradeTabState extends State<_ConditionTradeTab> {
     return l.isHorizontal ? '${_fmtNum(p)}원' : '약 ${_fmtNum(p)}원';
   }
 
-  Future<void> _submitLineCondition(bool isBuy, List<ChartLineInfo> lines) async {
-    final s = widget.selected;
-    if (s == null) return;
-    if (isBuy) { setState(() => _submittingBuy = true); }
-    else { setState(() => _submittingSell = true); }
-    try {
-      final qty = isBuy ? _lineBuyQty : _lineSellQty;
-      for (final l in lines) {
-        await context.read<AlertProvider>().addAlert(
-          ticker: s.ticker,
-          side: isBuy ? 'buy' : 'sell',
-          quantity: qty,
-          lineStartTime:  l.startTime,
-          lineStartPrice: l.startPrice,
-          lineEndTime:    l.endTime,
-          lineEndPrice:   l.endPrice,
-        );
-      }
-      if (mounted) _snack('${isBuy ? '매수' : '매도'} 조건이 등록됐습니다', success: true);
-    } catch (e) {
-      if (mounted) _snack(e.toString());
-    } finally {
-      if (mounted) {
-        if (isBuy) { setState(() => _submittingBuy = false); }
-        else { setState(() => _submittingSell = false); }
-      }
-    }
-  }
-
-  Future<void> _submitIndicator() async {
+  Future<void> _submit(List<ChartLineInfo> triggerLines) async {
     final s = widget.selected;
     if (s == null) { _snack('종목을 선택하세요'); return; }
-    setState(() => _submittingInd = true);
+    if (_activeCount == 0) { _snack('조건을 하나 이상 선택하세요'); return; }
+    setState(() => _submitting = true);
     try {
-      await context.read<JobProvider>().addJob(
+      await context.read<ConditionProvider>().addRule(
         ticker: s.ticker,
-        strategyName: _indicator,
-        quantity: _indQty,
+        side: _side,
+        quantity: _qty,
         intervalSeconds: _intervalSec,
-        dataInterval: _timeframe,
+        timeframe: _timeframe,
+        lineConditions: _useLineTrigger ? triggerLines : [],
+        useRsi: _useRsi,
+        rsiBuyThr: _rsiBuyThr,
+        rsiSellThr: _rsiSellThr,
+        useMaCross: _useMaCross,
+        useBollinger: _useBollinger,
       );
-      if (mounted) _snack('지표 조건이 등록됐습니다', success: true);
+      if (mounted) _snack('조건 규칙이 등록됐습니다', success: true);
     } catch (e) {
       if (mounted) _snack(e.toString());
     } finally {
-      if (mounted) setState(() => _submittingInd = false);
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -485,438 +472,481 @@ class _ConditionTradeTabState extends State<_ConditionTradeTab> {
     final allLines = sym != null
         ? context.watch<ChartProvider>().getLinesForTicker(sym.ticker)
         : <ChartLineInfo>[];
-    final buyLines  = allLines.where((l) => l.role == LineRole.buyTrigger).toList();
-    final sellLines = allLines.where((l) => l.role == LineRole.sellTrigger).toList();
+    final triggerLines = allLines
+        .where((l) => l.role == (_isBuy ? LineRole.buyTrigger : LineRole.sellTrigger))
+        .toList();
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
       children: [
-        // ── 매매선 트리거 ──────────────────────────
-        _buildSectionHeader(Icons.timeline, '매매선 트리거', '차트 추세선 기반 예약 주문'),
-        const SizedBox(height: 12),
-        if (sym == null)
-          _buildNoSymbolHint()
-        else if (buyLines.isEmpty && sellLines.isEmpty)
-          _buildNoLineHint()
-        else ...[
-          if (buyLines.isNotEmpty) ...[
-            _buildLineTriggerCard(
-              lines: buyLines, isBuy: true,
-              qty: _lineBuyQty,
-              onQtyChanged: (v) => setState(() => _lineBuyQty = v),
-              submitting: _submittingBuy,
-              onSubmit: () => _submitLineCondition(true, buyLines),
-            ),
-            const SizedBox(height: 10),
-          ],
-          if (sellLines.isNotEmpty)
-            _buildLineTriggerCard(
-              lines: sellLines, isBuy: false,
-              qty: _lineSellQty,
-              onQtyChanged: (v) => setState(() => _lineSellQty = v),
-              submitting: _submittingSell,
-              onSubmit: () => _submitLineCondition(false, sellLines),
-            ),
+        // ── 종목 미선택 힌트 ──
+        if (sym == null) ...[
+          _buildNoSymbolHint(),
+          const SizedBox(height: 20),
         ],
 
-        const SizedBox(height: 28),
+        // ── 방향 선택 ──
+        _SectionLabel('거래 방향'),
+        const SizedBox(height: 8),
+        _buildSideToggle(),
+        const SizedBox(height: 20),
 
-        // ── 지표 조건 ──────────────────────────────
-        _buildSectionHeader(Icons.analytics_outlined, '지표 조건', '기술 지표 기반 자동 전략'),
-        const SizedBox(height: 12),
-        if (sym == null)
-          _buildNoSymbolHint()
-        else ...[
-          _buildIndicatorGrid(),
-          const SizedBox(height: 16),
-          _buildTimeframeChips(),
-          const SizedBox(height: 16),
-          _buildIndicatorConditionCard(),
-          const SizedBox(height: 14),
-          _buildIndQuantityRow(),
-          const SizedBox(height: 14),
-          _buildIntervalChips(),
-          const SizedBox(height: 16),
-          GestureDetector(
-            onTap: _submittingInd ? null : _submitIndicator,
-            child: Container(
-              height: 52,
-              decoration: BoxDecoration(
-                color: const Color(0xFF6C63FF),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Center(
-                child: _submittingInd
-                    ? const SizedBox(width: 20, height: 20,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                    : const Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(Icons.bolt, color: Colors.white, size: 18),
-                        SizedBox(width: 6),
-                        Text('지표 조건 등록',
-                            style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-                      ]),
-              ),
+        // ── AND 조건 설명 ──
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: AppColors.green.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Row(children: [
+            Icon(Icons.join_inner, color: AppColors.green, size: 14),
+            SizedBox(width: 6),
+            Expanded(child: Text(
+              '선택한 모든 조건이 동시에 충족될 때 주문이 실행됩니다 (AND)',
+              style: TextStyle(color: AppColors.green, fontSize: 11),
+            )),
+          ]),
+        ),
+        const SizedBox(height: 16),
+
+        // ── 조건 카드들 ──
+        _buildLineToggleCard(sym, triggerLines),
+        const SizedBox(height: 8),
+        _buildRsiToggleCard(),
+        const SizedBox(height: 8),
+        _buildSimpleToggleCard(
+          label: '골든크로스',
+          badge: 'MA 5/20',
+          icon: Icons.trending_up,
+          color: const Color(0xFFF2B41E),
+          desc: _isBuy ? '단기MA(5)가 장기MA(20)를 상향 돌파' : '단기MA(5)가 장기MA(20)를 하향 돌파',
+          enabled: _useMaCross,
+          onToggle: (v) => setState(() => _useMaCross = v),
+        ),
+        const SizedBox(height: 8),
+        _buildSimpleToggleCard(
+          label: '볼린저밴드',
+          badge: 'BB(20,2)',
+          icon: Icons.speed,
+          color: const Color(0xFF6C63FF),
+          desc: _isBuy ? '볼린저 하단(−2σ) 이탈 감지' : '볼린저 상단(+2σ) 도달 감지',
+          enabled: _useBollinger,
+          onToggle: (v) => setState(() => _useBollinger = v),
+        ),
+        const SizedBox(height: 8),
+        _buildSimpleToggleCard(
+          label: '이치모쿠',
+          badge: 'Ichimoku',
+          icon: Icons.layers_outlined,
+          color: const Color(0xFF00BCD4),
+          desc: _isBuy ? '구름대 하단 지지선 근접' : '구름대 상단 저항선 도달',
+          enabled: _useIchimoku,
+          onToggle: (v) => setState(() => _useIchimoku = v),
+          wip: true,
+        ),
+
+        const SizedBox(height: 20),
+
+        // ── 봉 주기 ──
+        _SectionLabel('봉 주기'),
+        const SizedBox(height: 8),
+        _buildChips(_timeframes.map((tf) => (tf.label, tf.value)).toList(),
+            _timeframe, (v) => setState(() => _timeframe = v), AppColors.green),
+
+        const SizedBox(height: 16),
+
+        // ── 수량 ──
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(12)),
+          child: Row(children: [
+            const Text('수량', style: TextStyle(color: AppColors.gray, fontSize: 13)),
+            const Spacer(),
+            _CounterButton(icon: Icons.remove, onTap: () { if (_qty > 1) setState(() => _qty--); }),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text('$_qty주', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+            _CounterButton(icon: Icons.add, onTap: () => setState(() => _qty++)),
+          ]),
+        ),
+
+        const SizedBox(height: 14),
+
+        // ── 실행 간격 ──
+        _SectionLabel('실행 간격'),
+        const SizedBox(height: 8),
+        _buildChips(_intervals.map((iv) => (iv.label, iv.sec.toString())).toList(),
+            _intervalSec.toString(), (v) => setState(() => _intervalSec = int.parse(v)),
+            AppColors.green),
+
+        const SizedBox(height: 20),
+
+        // ── 등록 버튼 ──
+        GestureDetector(
+          onTap: (sym == null || _submitting || _activeCount == 0)
+              ? null
+              : () => _submit(triggerLines),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            height: 54,
+            decoration: BoxDecoration(
+              color: (_activeCount > 0 && sym != null) ? _sideColor : AppColors.card,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Center(
+              child: _submitting
+                  ? const SizedBox(width: 20, height: 20,
+                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.bolt, color: (_activeCount > 0 && sym != null) ? Colors.white : AppColors.gray, size: 18),
+                      const SizedBox(width: 6),
+                      Text(
+                        _activeCount == 0
+                            ? '조건을 선택하세요'
+                            : '${_isBuy ? '매수' : '매도'} 조건 $_activeCount개 AND 등록',
+                        style: TextStyle(
+                          color: (_activeCount > 0 && sym != null) ? Colors.white : AppColors.gray,
+                          fontSize: 14, fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ]),
             ),
           ),
-        ],
+        ),
 
         const SizedBox(height: 28),
-        _SectionLabel('대기 중인 매매선 예약'),
+        _SectionLabel('등록된 조건 규칙'),
         const SizedBox(height: 12),
-        _PendingAlertsList(),
-        const SizedBox(height: 28),
-        _SectionLabel('실행 중인 지표 전략'),
-        const SizedBox(height: 12),
-        _RunningJobsList(),
+        _CompoundRulesList(),
       ],
     );
   }
 
-  Widget _buildSectionHeader(IconData icon, String title, String sub) {
+  Widget _buildNoSymbolHint() => Container(
+    padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+    decoration: BoxDecoration(
+      color: AppColors.card, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white12),
+    ),
+    child: const Row(children: [
+      Icon(Icons.info_outline, color: AppColors.gray, size: 16),
+      SizedBox(width: 8),
+      Text('위 검색창에서 종목을 선택하세요', style: TextStyle(color: AppColors.gray, fontSize: 13)),
+    ]),
+  );
+
+  Widget _buildSideToggle() {
     return Row(children: [
-      Container(
-        width: 36, height: 36,
-        decoration: BoxDecoration(
-          color: AppColors.green.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Icon(icon, color: AppColors.green, size: 18),
-      ),
-      const SizedBox(width: 10),
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-        Text(sub, style: const TextStyle(color: AppColors.gray, fontSize: 11)),
-      ]),
+      Expanded(child: _SideButton(label: '매수', selected: _isBuy,  color: const Color(0xFF26A69A), onTap: () => setState(() => _side = 'buy'))),
+      const SizedBox(width: 8),
+      Expanded(child: _SideButton(label: '매도', selected: !_isBuy, color: AppColors.red,           onTap: () => setState(() => _side = 'sell'))),
     ]);
   }
 
-  Widget _buildNoSymbolHint() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: const Row(children: [
-        Icon(Icons.info_outline, color: AppColors.gray, size: 16),
-        SizedBox(width: 8),
-        Text('위 검색창에서 종목을 선택하세요',
-            style: TextStyle(color: AppColors.gray, fontSize: 13)),
-      ]),
+  // 매매선 조건 카드 (토글 + 라인 목록)
+  Widget _buildLineToggleCard(SymbolInfo? sym, List<ChartLineInfo> lines) {
+    final noLines = lines.isEmpty;
+    final label = _isBuy ? '매수선 터치' : '매도선 터치';
+    final color = _sideColor;
+
+    return _ConditionCard(
+      icon: _isBuy ? Icons.arrow_upward : Icons.arrow_downward,
+      label: label,
+      badge: _isBuy ? 'buyTrigger' : 'sellTrigger',
+      color: color,
+      enabled: _useLineTrigger,
+      disabled: sym == null || noLines,
+      onToggle: (v) => setState(() => _useLineTrigger = v),
+      expandedContent: noLines
+          ? _buildNoLineHint()
+          : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('감지된 ${_isBuy ? '매수' : '매도'}선 ${lines.length}개',
+                  style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              ...lines.asMap().entries.map((e) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(children: [
+                  Container(width: 16, height: 16,
+                    decoration: BoxDecoration(color: color.withValues(alpha: 0.15), shape: BoxShape.circle),
+                    child: Center(child: Text('${e.key + 1}', style: TextStyle(color: color, fontSize: 8, fontWeight: FontWeight.bold))),
+                  ),
+                  const SizedBox(width: 6),
+                  Text('${e.value.isHorizontal ? '수평선' : '추세선'}  ${_linePriceLabel(e.value)}',
+                      style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                ]),
+              )),
+            ]),
     );
   }
 
-  Widget _buildNoLineHint() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF26A69A).withValues(alpha: 0.3)),
+  Widget _buildNoLineHint() => Padding(
+    padding: const EdgeInsets.only(top: 4),
+    child: Row(children: [
+      const Icon(Icons.draw_outlined, color: AppColors.gray, size: 13),
+      const SizedBox(width: 6),
+      Expanded(child: Text(
+        '차트 탭에서 추세선을 그리고 ${_isBuy ? '매수' : '매도'}선으로 지정하세요',
+        style: const TextStyle(color: AppColors.gray, fontSize: 11),
+      )),
+    ]),
+  );
+
+  // RSI 조건 카드 (토글 + 기준값 칩)
+  Widget _buildRsiToggleCard() => _ConditionCard(
+    icon: Icons.show_chart,
+    label: 'RSI',
+    badge: 'RSI(14)',
+    color: AppColors.green,
+    enabled: _useRsi,
+    onToggle: (v) => setState(() => _useRsi = v),
+    expandedContent: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(
+        _isBuy ? 'RSI < $_rsiBuyThr  일 때 매수' : 'RSI > $_rsiSellThr  일 때 매도',
+        style: const TextStyle(color: Colors.white70, fontSize: 12),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Row(children: [
-          Icon(Icons.draw_outlined, color: Color(0xFF26A69A), size: 16),
-          SizedBox(width: 6),
-          Text('차트에 매매선을 그려주세요',
-              style: TextStyle(color: Color(0xFF26A69A), fontSize: 13, fontWeight: FontWeight.w600)),
-        ]),
-        const SizedBox(height: 8),
-        const Text(
-          '차트 탭에서 추세선을 그리고, 선을 탭해 툴바에서\n매수선 또는 매도선 역할을 지정하면 조건 등록이 가능합니다.',
-          style: TextStyle(color: AppColors.gray, fontSize: 12, height: 1.5),
-        ),
-        const SizedBox(height: 10),
-        const Row(children: [
-          _MiniTag('매수선', Color(0xFF26A69A)),
-          SizedBox(width: 6),
-          _MiniTag('매도선', AppColors.red),
-          SizedBox(width: 8),
-          Text('역할 지정 후 여기서 조건 등록', style: TextStyle(color: AppColors.gray, fontSize: 10)),
-        ]),
-      ]),
-    );
-  }
-
-  Widget _buildLineTriggerCard({
-    required List<ChartLineInfo> lines,
-    required bool isBuy,
-    required int qty,
-    required ValueChanged<int> onQtyChanged,
-    required bool submitting,
-    required VoidCallback onSubmit,
-  }) {
-    final color = isBuy ? const Color(0xFF26A69A) : AppColors.red;
-    final label = isBuy ? '매수선' : '매도선';
-    final icon  = isBuy ? Icons.arrow_upward : Icons.arrow_downward;
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(icon, color: color, size: 14),
-          const SizedBox(width: 6),
-          Text('$label  ${lines.length}개 감지',
-              style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w600)),
-        ]),
-        const SizedBox(height: 10),
-        ...lines.asMap().entries.map((e) => Padding(
-          padding: const EdgeInsets.only(bottom: 5),
-          child: Row(children: [
-            Container(
-              width: 18, height: 18,
-              decoration: BoxDecoration(color: color.withValues(alpha: 0.15), shape: BoxShape.circle),
-              child: Center(child: Text('${e.key + 1}',
-                  style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.bold))),
-            ),
-            const SizedBox(width: 8),
-            Expanded(child: Text(
-              '${e.value.isHorizontal ? '수평선' : '추세선'}  ${_linePriceLabel(e.value)}',
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            )),
-          ]),
-        )),
-        const SizedBox(height: 10),
-        const Divider(height: 1, color: Color(0xFF252A34)),
-        const SizedBox(height: 10),
-        Row(children: [
-          const Text('수량', style: TextStyle(color: AppColors.gray, fontSize: 13)),
-          const Spacer(),
-          _CounterButton(icon: Icons.remove, onTap: () { if (qty > 1) onQtyChanged(qty - 1); }),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Text('$qty주', style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-          ),
-          _CounterButton(icon: Icons.add, onTap: () => onQtyChanged(qty + 1)),
-        ]),
-        const SizedBox(height: 10),
-        GestureDetector(
-          onTap: submitting ? null : onSubmit,
-          child: Container(
-            height: 44,
-            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
-            child: Center(
-              child: submitting
-                  ? const SizedBox(width: 18, height: 18,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : Text('$label 조건 등록',
-                      style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
-            ),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  Widget _buildIndicatorGrid() {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4, mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 0.82,
-      ),
-      itemCount: _indicators.length,
-      itemBuilder: (_, i) {
-        final ind = _indicators[i];
-        final sel = _indicator == ind.id;
-        return GestureDetector(
-          onTap: () => setState(() => _indicator = ind.id),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: sel ? ind.color.withValues(alpha: 0.15) : AppColors.card,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: sel ? ind.color : Colors.transparent, width: 1.5),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(ind.icon, color: ind.color, size: 18),
-                const SizedBox(height: 4),
-                Text(ind.name, style: TextStyle(
-                    color: sel ? ind.color : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 2),
-                Text(ind.badge, style: TextStyle(color: ind.color.withValues(alpha: 0.8), fontSize: 9)),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildTimeframeChips() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const _SectionLabel('봉 주기'),
       const SizedBox(height: 8),
-      Row(children: _timeframes.map((tf) {
-        final sel = _timeframe == tf.value;
-        return Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: GestureDetector(
-            onTap: () => setState(() => _timeframe = tf.value),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: sel ? AppColors.green : AppColors.card,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(tf.label, style: TextStyle(
-                  color: sel ? AppColors.bg : AppColors.gray,
-                  fontSize: 13, fontWeight: FontWeight.w600)),
+      Wrap(spacing: 6, children: (
+        _isBuy ? _rsiBuyOpts : _rsiSellOpts
+      ).map((v) {
+        final sel = _isBuy ? _rsiBuyThr == v : _rsiSellThr == v;
+        return GestureDetector(
+          onTap: () => setState(() {
+            if (_isBuy) { _rsiBuyThr = v; } else { _rsiSellThr = v; }
+          }),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: sel ? AppColors.green : AppColors.bg,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: sel ? AppColors.green : AppColors.gray.withValues(alpha: 0.3)),
             ),
+            child: Text('$v', style: TextStyle(color: sel ? AppColors.bg : AppColors.gray, fontSize: 12, fontWeight: FontWeight.w600)),
           ),
         );
       }).toList()),
-    ]);
-  }
+    ]),
+  );
 
-  Widget _buildIndicatorConditionCard() {
-    final ind = _indicators.firstWhere((i) => i.id == _indicator);
-    return Container(
-      padding: const EdgeInsets.all(14),
+  // 단순 토글 카드 (설명만 표시)
+  Widget _buildSimpleToggleCard({
+    required String label,
+    required String badge,
+    required IconData icon,
+    required Color color,
+    required String desc,
+    required bool enabled,
+    required ValueChanged<bool> onToggle,
+    bool wip = false,
+  }) => _ConditionCard(
+    icon: icon, label: label, badge: badge, color: color,
+    enabled: enabled, onToggle: onToggle,
+    expandedContent: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(desc, style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.4)),
+      if (wip) ...[
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppColors.yellow.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(6),
+          ),
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.construction_outlined, color: AppColors.yellow, size: 11),
+            SizedBox(width: 4),
+            Text('백엔드 구현 예정', style: TextStyle(color: AppColors.yellow, fontSize: 10)),
+          ]),
+        ),
+      ],
+    ]),
+  );
+
+  Widget _buildChips(List<(String, String)> items, String selected, ValueChanged<String> onTap, Color activeColor) {
+    return Wrap(spacing: 8, runSpacing: 6, children: items.map((it) {
+      final sel = selected == it.$2;
+      return GestureDetector(
+        onTap: () => onTap(it.$2),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: sel ? activeColor : AppColors.card,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(it.$1, style: TextStyle(
+            color: sel ? AppColors.bg : AppColors.gray, fontSize: 13, fontWeight: FontWeight.w600,
+          )),
+        ),
+      );
+    }).toList());
+  }
+}
+
+// ── 조건 카드 공통 위젯 ───────────────────────────────────────────────────────
+
+class _ConditionCard extends StatelessWidget {
+  final IconData icon;
+  final String label, badge;
+  final Color color;
+  final bool enabled;
+  final bool disabled;
+  final ValueChanged<bool> onToggle;
+  final Widget? expandedContent;
+
+  const _ConditionCard({
+    required this.icon,
+    required this.label,
+    required this.badge,
+    required this.color,
+    required this.enabled,
+    required this.onToggle,
+    this.expandedContent,
+    this.disabled = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: ind.color.withValues(alpha: 0.25)),
+        border: Border.all(
+          color: enabled ? color.withValues(alpha: 0.5) : Colors.transparent,
+          width: 1.5,
+        ),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // 매수 조건
-        const Row(children: [
-          Icon(Icons.arrow_upward, color: Color(0xFF26A69A), size: 13),
-          SizedBox(width: 5),
-          Text('매수 조건', style: TextStyle(color: Color(0xFF26A69A), fontSize: 12, fontWeight: FontWeight.w600)),
-        ]),
-        const SizedBox(height: 8),
-        if (ind.id == 'rsi') ...[
-          Text('RSI < $_rsiBuyThr  일 때 매수',
-              style: const TextStyle(color: Colors.white70, fontSize: 12)),
-          const SizedBox(height: 8),
-          Wrap(spacing: 6, children: _rsiBuyOptions.map((v) {
-            final sel = _rsiBuyThr == v;
-            return GestureDetector(
-              onTap: () => setState(() => _rsiBuyThr = v),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 120),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                decoration: BoxDecoration(
-                  color: sel ? const Color(0xFF26A69A) : AppColors.bg,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: sel ? const Color(0xFF26A69A) : AppColors.gray.withValues(alpha: 0.3)),
-                ),
-                child: Text('$v', style: TextStyle(
-                    color: sel ? Colors.white : AppColors.gray,
-                    fontSize: 12, fontWeight: FontWeight.w600)),
+        // ── 헤더 (항상 표시) ──
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+          child: Row(children: [
+            Container(
+              width: 32, height: 32,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: enabled ? 0.2 : 0.08),
+                borderRadius: BorderRadius.circular(8),
               ),
-            );
-          }).toList()),
-        ] else
-          Text(ind.buyDesc, style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.4)),
-
-        const SizedBox(height: 14),
-        const Divider(height: 1, color: Color(0xFF252A34)),
-        const SizedBox(height: 14),
-
-        // 매도 조건
-        const Row(children: [
-          Icon(Icons.arrow_downward, color: AppColors.red, size: 13),
-          SizedBox(width: 5),
-          Text('매도 조건', style: TextStyle(color: AppColors.red, fontSize: 12, fontWeight: FontWeight.w600)),
-        ]),
-        const SizedBox(height: 8),
-        if (ind.id == 'rsi') ...[
-          Text('RSI > $_rsiSellThr  일 때 매도',
-              style: const TextStyle(color: Colors.white70, fontSize: 12)),
-          const SizedBox(height: 8),
-          Wrap(spacing: 6, children: _rsiSellOptions.map((v) {
-            final sel = _rsiSellThr == v;
-            return GestureDetector(
-              onTap: () => setState(() => _rsiSellThr = v),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 120),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                decoration: BoxDecoration(
-                  color: sel ? AppColors.red : AppColors.bg,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: sel ? AppColors.red : AppColors.gray.withValues(alpha: 0.3)),
-                ),
-                child: Text('$v', style: TextStyle(
-                    color: sel ? Colors.white : AppColors.gray,
-                    fontSize: 12, fontWeight: FontWeight.w600)),
-              ),
-            );
-          }).toList()),
-        ] else
-          Text(ind.sellDesc, style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.4)),
-
-        if (ind.id == 'ichimoku') ...[
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: AppColors.yellow.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(8),
+              child: Icon(icon, color: enabled ? color : AppColors.gray, size: 16),
             ),
-            child: const Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.construction_outlined, color: AppColors.yellow, size: 12),
-              SizedBox(width: 6),
-              Text('백엔드 구현 예정', style: TextStyle(color: AppColors.yellow, fontSize: 11)),
-            ]),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(label, style: TextStyle(
+                    color: enabled ? Colors.white : AppColors.gray,
+                    fontSize: 13, fontWeight: FontWeight.w600)),
+                Text(badge, style: TextStyle(
+                    color: enabled ? color.withValues(alpha: 0.8) : AppColors.gray,
+                    fontSize: 10)),
+              ]),
+            ),
+            Switch(
+              value: enabled,
+              onChanged: disabled ? null : onToggle,
+              activeThumbColor: color,
+              inactiveThumbColor: AppColors.gray,
+              inactiveTrackColor: AppColors.bg,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ]),
+        ),
+
+        // ── 펼침 영역 (enabled 시) ──
+        if (enabled && expandedContent != null) ...[
+          const Divider(height: 1, color: Color(0xFF252A34)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+            child: expandedContent!,
           ),
         ],
       ]),
     );
   }
+}
 
-  Widget _buildIndQuantityRow() {
+// ── 등록된 복합 조건 목록 ─────────────────────────────────────────────────────
+
+class _CompoundRulesList extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<ConditionProvider>(builder: (_, provider, _) {
+      if (provider.loading) {
+        return const Center(child: CircularProgressIndicator(color: AppColors.green, strokeWidth: 2));
+      }
+      if (provider.rules.isEmpty) {
+        return _emptyState(Icons.rule_outlined, '등록된 조건 규칙이 없습니다', '위에서 조건을 조합해 등록하세요');
+      }
+      return Column(
+        children: provider.rules.map((r) => Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: _CompoundRuleCard(rule: r),
+        )).toList(),
+      );
+    });
+  }
+}
+
+class _CompoundRuleCard extends StatelessWidget {
+  final CompoundConditionModel rule;
+  const _CompoundRuleCard({required this.rule});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = rule.isBuy ? const Color(0xFF26A69A) : AppColors.red;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(12)),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14)),
       child: Row(children: [
-        const Text('수량', style: TextStyle(color: AppColors.gray, fontSize: 13)),
-        const Spacer(),
-        _CounterButton(icon: Icons.remove, onTap: () { if (_indQty > 1) setState(() => _indQty--); }),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Text('$_indQty주', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+        Container(
+          width: 3, height: 40,
+          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
         ),
-        _CounterButton(icon: Icons.add, onTap: () => setState(() => _indQty++)),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('${rule.ticker}  ${rule.isBuy ? '매수' : '매도'}  ${rule.quantity}주',
+              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 3),
+          Text(rule.conditionSummary.isEmpty ? '조건 없음' : rule.conditionSummary,
+              style: const TextStyle(color: AppColors.gray, fontSize: 11)),
+          if (rule.triggeredCount > 0) ...[
+            const SizedBox(height: 2),
+            Text('${rule.triggeredCount}회 실행됨', style: const TextStyle(color: AppColors.green, fontSize: 10)),
+          ],
+        ])),
+        GestureDetector(
+          onTap: () => _confirmDelete(context),
+          child: Container(
+            width: 28, height: 28,
+            decoration: BoxDecoration(
+              color: AppColors.red.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(7),
+            ),
+            child: const Icon(Icons.close, color: AppColors.red, size: 14),
+          ),
+        ),
       ]),
     );
   }
 
-  Widget _buildIntervalChips() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const _SectionLabel('실행 간격'),
-      const SizedBox(height: 8),
-      Wrap(spacing: 8, runSpacing: 6, children: _intervals.map((iv) {
-        final sel = _intervalSec == iv.sec;
-        return GestureDetector(
-          onTap: () => setState(() => _intervalSec = iv.sec),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: sel ? AppColors.green : AppColors.card,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(iv.label, style: TextStyle(
-                color: sel ? AppColors.bg : AppColors.gray,
-                fontSize: 13, fontWeight: FontWeight.w600)),
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text('조건 삭제', style: TextStyle(color: Colors.white)),
+        content: Text('${rule.ticker} 조건 규칙을 삭제할까요?',
+            style: const TextStyle(color: AppColors.gray)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context),
+              child: const Text('취소', style: TextStyle(color: AppColors.gray))),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              context.read<ConditionProvider>().deleteRule(rule.ruleId);
+            },
+            child: const Text('삭제', style: TextStyle(color: AppColors.red)),
           ),
-        );
-      }).toList()),
-    ]);
+        ],
+      ),
+    );
   }
 }
 
@@ -1168,7 +1198,7 @@ class _PendingAlertsListState extends State<_PendingAlertsList> {
   @override
   Widget build(BuildContext context) {
     return Consumer<AlertProvider>(
-      builder: (_, provider, __) {
+      builder: (_, provider, _) {
         if (provider.loading) {
           return const Center(
               child: CircularProgressIndicator(
@@ -1450,155 +1480,6 @@ class _AlertRow extends StatelessWidget {
   }
 }
 
-// ─── Running Jobs List ────────────────────────────────────────────────────────
-
-class _RunningJobsList extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Consumer<JobProvider>(
-      builder: (_, provider, __) {
-        if (provider.loading) {
-          return const Center(
-              child: CircularProgressIndicator(
-                  color: AppColors.green, strokeWidth: 2));
-        }
-        if (provider.jobs.isEmpty) {
-          return _emptyState(
-              Icons.auto_mode, '등록된 전략이 없습니다', '위에서 전략을 추가하세요');
-        }
-        return Column(
-          children: provider.jobs
-              .map((j) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: _JobCard(job: j),
-                  ))
-              .toList(),
-        );
-      },
-    );
-  }
-}
-
-class _JobCard extends StatelessWidget {
-  final SchedulerJob job;
-  const _JobCard({required this.job});
-
-  @override
-  Widget build(BuildContext context) {
-    final provider = context.read<JobProvider>();
-    final color = job.isPaused ? AppColors.gray : AppColors.green;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 3,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(job.strategyName,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600)),
-                    Text('${job.ticker}  ·  ${job.scheduleLabel}',
-                        style: const TextStyle(
-                            color: AppColors.gray, fontSize: 11)),
-                  ],
-                ),
-              ),
-              _StatusBadge(isPaused: job.isPaused),
-            ],
-          ),
-          if (job.nextRunTime != null) ...[
-            const SizedBox(height: 6),
-            Text('다음 실행: ${job.nextRunTime}',
-                style: const TextStyle(
-                    color: AppColors.gray, fontSize: 10)),
-          ],
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              _SmallBtn(
-                icon: job.isPaused ? Icons.play_arrow : Icons.pause,
-                label: job.isPaused ? '재개' : '일시정지',
-                color: color,
-                onTap: () => job.isPaused
-                    ? provider.resumeJob(job.jobId)
-                    : provider.pauseJob(job.jobId),
-              ),
-              const SizedBox(width: 8),
-              _SmallBtn(
-                icon: Icons.flash_on,
-                label: '즉시 실행',
-                color: AppColors.yellow,
-                onTap: () => provider.runJobNow(job.jobId),
-              ),
-              const Spacer(),
-              GestureDetector(
-                onTap: () => _confirmDelete(context, provider),
-                child: Container(
-                  width: 30,
-                  height: 30,
-                  decoration: BoxDecoration(
-                    color: AppColors.red.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(Icons.close,
-                      color: AppColors.red, size: 16),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _confirmDelete(BuildContext context, JobProvider provider) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card,
-        title: const Text('전략 삭제',
-            style: TextStyle(color: Colors.white)),
-        content: Text('${job.ticker} · ${job.strategyName}\n삭제할까요?',
-            style: const TextStyle(color: AppColors.gray)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child:
-                const Text('취소', style: TextStyle(color: AppColors.gray)),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              provider.deleteJob(job.jobId);
-            },
-            child: const Text('삭제',
-                style: TextStyle(color: AppColors.red)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 // ─── Micro Widgets ────────────────────────────────────────────────────────────
 
 class _SectionLabel extends StatelessWidget {
@@ -1612,64 +1493,6 @@ class _SectionLabel extends StatelessWidget {
           fontSize: 12,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.4));
-}
-
-class _StatusBadge extends StatelessWidget {
-  final bool isPaused;
-  const _StatusBadge({required this.isPaused});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = isPaused ? AppColors.gray : AppColors.green;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(isPaused ? '일시정지' : '실행 중',
-          style: TextStyle(
-              color: color, fontSize: 10, fontWeight: FontWeight.w600)),
-    );
-  }
-}
-
-class _SmallBtn extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-  const _SmallBtn(
-      {required this.icon,
-      required this.label,
-      required this.color,
-      required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 13, color: color),
-            const SizedBox(width: 4),
-            Text(label,
-                style: TextStyle(
-                    color: color,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600)),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _CounterButton extends StatelessWidget {
@@ -1797,23 +1620,6 @@ Widget _emptyState(IconData icon, String title, String sub) {
       ),
     ),
   );
-}
-
-// ─── Indicator metadata ───────────────────────────────────────────────────────
-
-class _IndMeta {
-  final String id, name, badge, buyDesc, sellDesc;
-  final IconData icon;
-  final Color color;
-  const _IndMeta({
-    required this.id,
-    required this.name,
-    required this.badge,
-    required this.icon,
-    required this.color,
-    required this.buyDesc,
-    required this.sellDesc,
-  });
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

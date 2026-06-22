@@ -10,6 +10,7 @@ import 'providers/balance_provider.dart';
 import 'providers/job_provider.dart';
 import 'providers/alert_provider.dart';
 import 'providers/chart_provider.dart';
+import 'providers/condition_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/home/home_screen.dart';
@@ -30,6 +31,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => JobProvider()),
         ChangeNotifierProvider(create: (_) => AlertProvider()),
         ChangeNotifierProvider(create: (_) => ChartProvider()..load()),
+        ChangeNotifierProvider(create: (_) => ConditionProvider()),
       ],
       child: const TradingApp(),
     ),

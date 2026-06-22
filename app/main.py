@@ -4,9 +4,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import account, market, orders, strategy, ws, scheduler, devices
+from app.api.routes import account, market, orders, strategy, ws, scheduler, devices, conditions
 from app.core.config import get_settings
-from app.core.dependencies import get_price_monitor, get_realtime_service, get_scheduler
+from app.core.dependencies import get_price_monitor, get_realtime_service, get_scheduler, get_condition_service
 from app.kis import master as stock_master
 from app.kis import us_master
 
@@ -27,9 +27,11 @@ async def lifespan(app: FastAPI):
     realtime.start()
     sched = get_scheduler()
     sched.start()
+    get_condition_service()          # 싱글톤 초기화 (start는 add_rule 시 태스크 생성)
     await stock_master.load_master()
     await us_master.load_master()   # NASDAQ/NYSE/AMEX 해외주식 마스터
     yield
+    get_condition_service().stop()
     sched.shutdown()
     realtime.stop()
     monitor.stop()
@@ -57,6 +59,7 @@ app.include_router(strategy.router, prefix="/api/v1")
 app.include_router(ws.router)  # /ws/* 경로는 prefix 없음
 app.include_router(scheduler.router, prefix="/api/v1")
 app.include_router(devices.router, prefix="/api/v1")
+app.include_router(conditions.router, prefix="/api/v1")
 
 
 @app.get("/health")
