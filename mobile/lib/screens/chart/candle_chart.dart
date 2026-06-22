@@ -455,7 +455,7 @@ class _CandleChartState extends State<CandleChart> {
       }
       return (rp + vc.length - 0.5) * _cw;
     }
-    if (ln.isHorizontal) {
+    if (ln.isHorizontal || ln.drawType == DrawTool.horizontalLine) {
       final y = pyF(ln.startPrice);
       return (Offset(0, y), Offset(_chartW, y));
     }
@@ -471,12 +471,65 @@ class _CandleChartState extends State<CandleChart> {
     return (p - (a + ab * t)).distance;
   }
 
+  // Minimum distance from tap to any visible part of a drawn line/shape.
+  double _lineHitDist(ChartLine ln, Offset tap) {
+    final vp = _viewParams();
+    if (vp == null) return double.infinity;
+    final vc = vp.vc; final rp = vp.rp;
+    double pyF(double p) => vp.pH - (p - vp.pMin) / vp.pSpan * vp.pH;
+    double txToX(int t) {
+      if (vc.isEmpty) return 0;
+      final avg = vc.length >= 2
+          ? (vc.last.time - vc.first.time) / (vc.length - 1) : 86400.0;
+      if (t <= vc.first.time) return (rp + 0.5 - (vc.first.time - t) / avg) * _cw;
+      if (t >= vc.last.time) return (rp + vc.length - 0.5 + (t - vc.last.time) / avg) * _cw;
+      for (int i = 0; i < vc.length - 1; i++) {
+        if (t < vc[i + 1].time) {
+          final frac = (t - vc[i].time) / (vc[i + 1].time - vc[i].time);
+          return (rp + i + frac + 0.5) * _cw;
+        }
+      }
+      return (rp + vc.length - 0.5) * _cw;
+    }
+    Offset px(DrawingPoint dp) => Offset(txToX(dp.time), pyF(dp.price));
+
+    // Full-width horizontal line
+    if (ln.isHorizontal || ln.drawType == DrawTool.horizontalLine) {
+      final y = pyF(ln.startPrice);
+      return _ptSegDist(tap, Offset(0, y), Offset(_chartW, y));
+    }
+    // Full-height vertical line
+    if (ln.drawType == DrawTool.verticalLine) {
+      final x = txToX(ln.startTime);
+      return _ptSegDist(tap, Offset(x, 0), Offset(x, _chartH));
+    }
+    // Crosshair: check both H and V lines
+    if (ln.drawType == DrawTool.crossLine) {
+      final x = txToX(ln.startTime); final y = pyF(ln.startPrice);
+      return math.min(
+        _ptSegDist(tap, Offset(0, y), Offset(_chartW, y)),
+        _ptSegDist(tap, Offset(x, 0), Offset(x, _chartH)),
+      );
+    }
+    // Multi-point tools: check all consecutive segments
+    if (ln.pts.length >= 2) {
+      double minD = double.infinity;
+      for (int j = 0; j < ln.pts.length - 1; j++) {
+        minD = math.min(minD, _ptSegDist(tap, px(ln.pts[j]), px(ln.pts[j + 1])));
+      }
+      return minD;
+    }
+    // 1-point tools (text, note, arrow, etc.): proximity to anchor point
+    if (ln.pts.isNotEmpty) {
+      return (tap - px(ln.pts.first)).distance;
+    }
+    return double.infinity;
+  }
+
   int? _findLineAt(Offset tap) {
     int? hit; double minD = 12.0;
     for (int i = 0; i < _lines.length; i++) {
-      final pts = _linePixels(_lines[i]);
-      if (pts == null) { continue; }
-      final d = _ptSegDist(tap, pts.$1, pts.$2);
+      final d = _lineHitDist(_lines[i], tap);
       if (d < minD) { minD = d; hit = i; }
     }
     return hit;
