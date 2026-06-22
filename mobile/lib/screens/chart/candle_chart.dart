@@ -55,12 +55,22 @@ class CandleData {
 
 enum DrawTool {
   none,
+  // 트렌드 라인
   trendLine, crossLine, parallelChannel,
+  horizontalLine, verticalLine, ray, extendedLine,
+  // 간과 피보나치
   fibRetracement, fibExtension, fibTimeZone,
+  fibFan, fibArc, gannFan, gannSquare,
+  // 패턴
   headAndShoulders, elliottWave, xabcdPattern,
+  abcdPattern, trianglePattern,
+  // 예측 및 측정
   longPosition, shortPosition,
-  brush,
-  text, note, priceNote,
+  priceRange, dateRange, barsPattern,
+  // 기하 도형
+  brush, rectangle, ellipse, triangle, arc,
+  // 주석
+  text, note, priceNote, arrowUp, arrowDown, callout,
 }
 enum DrawPhase { idle, placingFirst, placingSecond, placingMore, selected }
 enum LineStyle { solid, dashed, dotted }
@@ -74,19 +84,37 @@ class DrawingPoint {
 extension _DrawToolX on DrawTool {
   int get pointCount {
     switch (this) {
+      // 1점 도구
       case DrawTool.crossLine:
-      case DrawTool.text: case DrawTool.note: case DrawTool.priceNote: return 1;
-      case DrawTool.trendLine: case DrawTool.fibRetracement: case DrawTool.fibTimeZone:
-      case DrawTool.longPosition: case DrawTool.shortPosition: return 2;
-      case DrawTool.parallelChannel: case DrawTool.fibExtension: return 3;
+      case DrawTool.horizontalLine: case DrawTool.verticalLine:
+      case DrawTool.arrowUp: case DrawTool.arrowDown:
+      case DrawTool.text: case DrawTool.note: case DrawTool.priceNote:
+      case DrawTool.callout: return 1;
+      // 2점 도구
+      case DrawTool.trendLine: case DrawTool.ray: case DrawTool.extendedLine:
+      case DrawTool.fibRetracement: case DrawTool.fibTimeZone:
+      case DrawTool.fibFan: case DrawTool.fibArc:
+      case DrawTool.gannFan: case DrawTool.gannSquare:
+      case DrawTool.longPosition: case DrawTool.shortPosition:
+      case DrawTool.priceRange: case DrawTool.dateRange: case DrawTool.barsPattern:
+      case DrawTool.rectangle: case DrawTool.ellipse: return 2;
+      // 3점 도구
+      case DrawTool.parallelChannel: case DrawTool.fibExtension:
+      case DrawTool.trianglePattern: case DrawTool.triangle: case DrawTool.arc: return 3;
+      // 4점 도구
+      case DrawTool.abcdPattern: return 4;
+      // 5점 도구
       case DrawTool.headAndShoulders: case DrawTool.xabcdPattern: return 5;
+      // 6점 도구
       case DrawTool.elliottWave: return 6;
+      // 드래그 도구
       case DrawTool.brush: return -1;
       case DrawTool.none: return 0;
     }
   }
   bool get isTextTool =>
-      this == DrawTool.text || this == DrawTool.note || this == DrawTool.priceNote;
+      this == DrawTool.text || this == DrawTool.note ||
+      this == DrawTool.priceNote || this == DrawTool.callout;
 }
 
 class ChartLine {
@@ -2732,6 +2760,277 @@ class _Painter extends CustomPainter {
         continue;
       }
 
+      // ── 트렌드 라인 확장 ──────────────────────────────────────────────────
+      if (ln.drawType == DrawTool.horizontalLine && ln.pts.isNotEmpty) {
+        final y = pyFn(ln.pts[0].price);
+        if (y >= -1 && y <= pH + 1) seg(Offset(0, y), Offset(chartW, y));
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.verticalLine && ln.pts.isNotEmpty) {
+        final x = txToX(ln.pts[0].time);
+        seg(Offset(x, 0), Offset(x, pH));
+        continue;
+      }
+
+      if ((ln.drawType == DrawTool.ray || ln.drawType == DrawTool.extendedLine)
+          && ln.pts.length >= 2) {
+        final x0 = txToX(ln.pts[0].time), y0 = pyFn(ln.pts[0].price);
+        final x1 = txToX(ln.pts[1].time), y1 = pyFn(ln.pts[1].price);
+        final dx = x1 - x0, dy = y1 - y0;
+        if (dx.abs() < 0.5) { seg(Offset(x0, 0), Offset(x0, pH)); continue; }
+        // 오른쪽 끝 클리핑
+        final tRight = (chartW - x0) / dx;
+        final yRight = y0 + dy * tRight;
+        seg(Offset(x1, y1), Offset(chartW, yRight));
+        if (ln.drawType == DrawTool.extendedLine) {
+          final tLeft = (0 - x0) / dx;
+          seg(Offset(x0, y0), Offset(0, y0 + dy * tLeft));
+        } else {
+          seg(Offset(x0, y0), Offset(x1, y1));
+        }
+        continue;
+      }
+
+      // ── 간과 피보나치 확장 ────────────────────────────────────────────────
+      if (ln.drawType == DrawTool.fibFan && ln.pts.length >= 2) {
+        final x0 = txToX(ln.pts[0].time), y0 = pyFn(ln.pts[0].price);
+        final x1 = txToX(ln.pts[1].time), y1 = pyFn(ln.pts[1].price);
+        const fibs = [0.236, 0.382, 0.5, 0.618, 1.0];
+        const labs = ['0.236', '0.382', '0.5', '0.618', '1.0'];
+        final dx = x1 - x0, dy = y1 - y0;
+        seg(Offset(x0, y0), Offset(x1, y1));
+        for (int i = 0; i < fibs.length; i++) {
+          final yt = y0 + dy * fibs[i];
+          final tRight = chartW / math.max(dx.abs(), 1);
+          canvas.drawLine(Offset(x0, y0), Offset(x0 + dx * tRight, y0 + dy * fibs[i] * tRight),
+              Paint()..color = col.withValues(alpha: 0.45)..strokeWidth = 0.8
+                ..style = PaintingStyle.stroke);
+          lbl(labs[i], col.withValues(alpha: 0.75), chartW - 36, y0 + dy * fibs[i] * tRight - 11);
+        }
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.fibArc && ln.pts.length >= 2) {
+        final x0 = txToX(ln.pts[0].time), y0 = pyFn(ln.pts[0].price);
+        final x1 = txToX(ln.pts[1].time), y1 = pyFn(ln.pts[1].price);
+        final r = math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+        const fibs = [0.236, 0.382, 0.5, 0.618, 1.0];
+        const labs = ['0.236', '0.382', '0.5', '0.618', '1.0'];
+        canvas.drawCircle(Offset(x0, y0), 3, Paint()..color = col);
+        for (int i = 0; i < fibs.length; i++) {
+          canvas.drawArc(
+            Rect.fromCircle(center: Offset(x0, y0), radius: r * fibs[i]),
+            math.pi, math.pi, false,
+            Paint()..color = col.withValues(alpha: 0.45)..strokeWidth = 0.8
+              ..style = PaintingStyle.stroke,
+          );
+          lbl(labs[i], col.withValues(alpha: 0.75), x0 + r * fibs[i] - 10, y0 - 11);
+        }
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.gannFan && ln.pts.length >= 2) {
+        final x0 = txToX(ln.pts[0].time), y0 = pyFn(ln.pts[0].price);
+        final dx = txToX(ln.pts[1].time) - x0;
+        final dy = pyFn(ln.pts[1].price) - y0;
+        final unit = dx.abs() < 0.5 ? 1.0 : dy / dx;
+        final ratios = [8.0, 4.0, 3.0, 2.0, 1.0, 0.5, 0.333, 0.25, 0.125];
+        final labs   = ['8:1','4:1','3:1','2:1','1:1','1:2','1:3','1:4','1:8'];
+        final tRight = (chartW - x0) / math.max(dx.abs(), 1);
+        for (int i = 0; i < ratios.length; i++) {
+          final slope = unit * ratios[i];
+          final xe = x0 + (chartW - x0); final ye = y0 + slope * tRight * dx.sign;
+          canvas.drawLine(Offset(x0, y0), Offset(xe, ye),
+              Paint()..color = col.withValues(alpha: i == 4 ? 0.8 : 0.35)..strokeWidth = i == 4 ? w : 0.8
+                ..style = PaintingStyle.stroke);
+          if (ye >= 0 && ye <= pH) lbl(labs[i], col.withValues(alpha: 0.65), xe - 28, ye - 11);
+        }
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.gannSquare && ln.pts.length >= 2) {
+        final x0 = txToX(ln.pts[0].time), y0 = pyFn(ln.pts[0].price);
+        final x1 = txToX(ln.pts[1].time), y1 = pyFn(ln.pts[1].price);
+        final cellW = (x1 - x0) / 4, cellH = (y1 - y0) / 4;
+        final gridPaint = Paint()..color = col.withValues(alpha: 0.25)..strokeWidth = 0.6
+          ..style = PaintingStyle.stroke;
+        for (int i = 0; i <= 4; i++) {
+          canvas.drawLine(Offset(x0 + cellW * i, y0), Offset(x0 + cellW * i, y1), gridPaint);
+          canvas.drawLine(Offset(x0, y0 + cellH * i), Offset(x1, y0 + cellH * i), gridPaint);
+        }
+        canvas.drawRect(Rect.fromLTRB(x0, y0, x1, y1),
+            Paint()..color = col.withValues(alpha: 0.08));
+        canvas.drawLine(Offset(x0, y0), Offset(x1, y1),
+            Paint()..color = col.withValues(alpha: 0.5)..strokeWidth = w..style = PaintingStyle.stroke);
+        continue;
+      }
+
+      // ── 패턴 확장 ─────────────────────────────────────────────────────────
+      if (ln.drawType == DrawTool.abcdPattern && ln.pts.length >= 4) {
+        const labels = ['A', 'B', 'C', 'D'];
+        final offs = ln.pts.take(4).map((p) => Offset(txToX(p.time), pyFn(p.price))).toList();
+        for (int i = 0; i < offs.length - 1; i++) seg(offs[i], offs[i + 1]);
+        for (int i = 0; i < labels.length; i++) {
+          canvas.drawCircle(offs[i], 3.5, Paint()..color = col.withValues(alpha: 0.3));
+          final tp = TextPainter(
+            text: TextSpan(text: labels[i], style: TextStyle(color: col, fontSize: 9, fontWeight: FontWeight.bold)),
+            textDirection: TextDirection.ltr,
+          )..layout();
+          tp.paint(canvas, offs[i] + Offset(-tp.width / 2, -15));
+        }
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.trianglePattern && ln.pts.length >= 3) {
+        final offs = ln.pts.take(3).map((p) => Offset(txToX(p.time), pyFn(p.price))).toList();
+        seg(offs[0], offs[1]); seg(offs[1], offs[2]); seg(offs[2], offs[0]);
+        const labels = ['A', 'B', 'C'];
+        for (int i = 0; i < labels.length; i++) {
+          canvas.drawCircle(offs[i], 3.5, Paint()..color = col.withValues(alpha: 0.3));
+          final tp = TextPainter(
+            text: TextSpan(text: labels[i], style: TextStyle(color: col, fontSize: 9, fontWeight: FontWeight.bold)),
+            textDirection: TextDirection.ltr,
+          )..layout();
+          tp.paint(canvas, offs[i] + Offset(-tp.width / 2, -15));
+        }
+        continue;
+      }
+
+      // ── 예측 및 측정 확장 ─────────────────────────────────────────────────
+      if (ln.drawType == DrawTool.priceRange && ln.pts.length >= 2) {
+        final y0 = pyFn(ln.pts[0].price), y1 = pyFn(ln.pts[1].price);
+        final top = math.min(y0, y1), bot = math.max(y0, y1);
+        canvas.drawRect(Rect.fromLTRB(0, top, chartW, bot),
+            Paint()..color = col.withValues(alpha: 0.1));
+        canvas.drawLine(Offset(0, top), Offset(chartW, top),
+            Paint()..color = col.withValues(alpha: 0.7)..strokeWidth = w..style = PaintingStyle.stroke);
+        canvas.drawLine(Offset(0, bot), Offset(chartW, bot),
+            Paint()..color = col.withValues(alpha: 0.7)..strokeWidth = w..style = PaintingStyle.stroke);
+        final pct = ((ln.pts[1].price - ln.pts[0].price) / ln.pts[0].price * 100).toStringAsFixed(2);
+        final diff = (ln.pts[1].price - ln.pts[0].price).toStringAsFixed(0);
+        lbl('$diff  $pct%', col, chartW / 2 - 30, (top + bot) / 2 - 7);
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.dateRange && ln.pts.length >= 2) {
+        final x0 = txToX(ln.pts[0].time), x1 = txToX(ln.pts[1].time);
+        final left = math.min(x0, x1), right = math.max(x0, x1);
+        canvas.drawRect(Rect.fromLTRB(left, 0, right, pH),
+            Paint()..color = col.withValues(alpha: 0.1));
+        canvas.drawLine(Offset(left, 0), Offset(left, pH),
+            Paint()..color = col.withValues(alpha: 0.7)..strokeWidth = w..style = PaintingStyle.stroke);
+        canvas.drawLine(Offset(right, 0), Offset(right, pH),
+            Paint()..color = col.withValues(alpha: 0.7)..strokeWidth = w..style = PaintingStyle.stroke);
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.barsPattern && ln.pts.length >= 2) {
+        final x0 = txToX(ln.pts[0].time), y0 = pyFn(ln.pts[0].price);
+        final x1 = txToX(ln.pts[1].time), y1 = pyFn(ln.pts[1].price);
+        seg(Offset(x0, y0), Offset(x1, y0));
+        seg(Offset(x1, y0), Offset(x1, y1));
+        seg(Offset(x1, y1), Offset(x0, y1));
+        seg(Offset(x0, y1), Offset(x0, y0));
+        final pct = ((ln.pts[1].price - ln.pts[0].price) / ln.pts[0].price * 100);
+        final bars = ((ln.pts[1].time - ln.pts[0].time) / 86400).round().abs();
+        lbl('$bars 바  ${pct.toStringAsFixed(2)}%',
+            col, math.min(x0, x1) + 4, math.min(y0, y1) + 4);
+        continue;
+      }
+
+      // ── 기하 도형 ─────────────────────────────────────────────────────────
+      if (ln.drawType == DrawTool.rectangle && ln.pts.length >= 2) {
+        final x0 = txToX(ln.pts[0].time), y0 = pyFn(ln.pts[0].price);
+        final x1 = txToX(ln.pts[1].time), y1 = pyFn(ln.pts[1].price);
+        final rect = Rect.fromLTRB(math.min(x0,x1), math.min(y0,y1), math.max(x0,x1), math.max(y0,y1));
+        canvas.drawRect(rect, Paint()..color = col.withValues(alpha: 0.1));
+        canvas.drawRect(rect, Paint()..color = col.withValues(alpha: 0.7)..strokeWidth = w
+          ..style = PaintingStyle.stroke);
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.ellipse && ln.pts.length >= 2) {
+        final x0 = txToX(ln.pts[0].time), y0 = pyFn(ln.pts[0].price);
+        final x1 = txToX(ln.pts[1].time), y1 = pyFn(ln.pts[1].price);
+        final rect = Rect.fromLTRB(math.min(x0,x1), math.min(y0,y1), math.max(x0,x1), math.max(y0,y1));
+        canvas.drawOval(rect, Paint()..color = col.withValues(alpha: 0.1));
+        canvas.drawOval(rect, Paint()..color = col.withValues(alpha: 0.7)..strokeWidth = w
+          ..style = PaintingStyle.stroke);
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.triangle && ln.pts.length >= 3) {
+        final offs = ln.pts.take(3).map((p) => Offset(txToX(p.time), pyFn(p.price))).toList();
+        final path = Path()..moveTo(offs[0].dx, offs[0].dy)
+          ..lineTo(offs[1].dx, offs[1].dy)..lineTo(offs[2].dx, offs[2].dy)..close();
+        canvas.drawPath(path, Paint()..color = col.withValues(alpha: 0.1));
+        canvas.drawPath(path, Paint()..color = col.withValues(alpha: 0.7)..strokeWidth = w
+          ..style = PaintingStyle.stroke);
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.arc && ln.pts.length >= 3) {
+        final offs = ln.pts.take(3).map((p) => Offset(txToX(p.time), pyFn(p.price))).toList();
+        final path = Path()..moveTo(offs[0].dx, offs[0].dy);
+        path.quadraticBezierTo(offs[1].dx, offs[1].dy, offs[2].dx, offs[2].dy);
+        canvas.drawPath(path, Paint()..color = col.withValues(alpha: 0.7)..strokeWidth = w
+          ..style = PaintingStyle.stroke);
+        canvas.drawCircle(offs[1], 3, Paint()..color = col.withValues(alpha: 0.5));
+        continue;
+      }
+
+      // ── 주석 확장 ─────────────────────────────────────────────────────────
+      if ((ln.drawType == DrawTool.arrowUp || ln.drawType == DrawTool.arrowDown)
+          && ln.pts.isNotEmpty) {
+        final x = txToX(ln.pts[0].time), y = pyFn(ln.pts[0].price);
+        final isUp = ln.drawType == DrawTool.arrowUp;
+        final path = Path();
+        const hw = 7.0; const ah = 12.0; const sh = 6.0;
+        if (isUp) {
+          path.moveTo(x, y - ah);
+          path.lineTo(x - hw, y); path.lineTo(x - hw / 2, y);
+          path.lineTo(x - hw / 2, y + sh); path.lineTo(x + hw / 2, y + sh);
+          path.lineTo(x + hw / 2, y); path.lineTo(x + hw, y);
+        } else {
+          path.moveTo(x, y + ah);
+          path.lineTo(x - hw, y); path.lineTo(x - hw / 2, y);
+          path.lineTo(x - hw / 2, y - sh); path.lineTo(x + hw / 2, y - sh);
+          path.lineTo(x + hw / 2, y); path.lineTo(x + hw, y);
+        }
+        path.close();
+        canvas.drawPath(path, Paint()..color = col.withValues(alpha: 0.8));
+        continue;
+      }
+
+      if (ln.drawType == DrawTool.callout && ln.pts.isNotEmpty) {
+        final txt = ln.text ?? '';
+        if (txt.isEmpty) { continue; }
+        final x = txToX(ln.pts[0].time), y = pyFn(ln.pts[0].price);
+        final tp = TextPainter(
+          text: TextSpan(text: txt, style: TextStyle(color: col, fontSize: 11)),
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: 120);
+        const pad = 6.0; const tailH = 8.0;
+        final bx = (x - tp.width / 2 - pad).clamp(2.0, chartW - tp.width - pad * 2 - 2);
+        final by = y - tp.height - pad * 2 - tailH - 12;
+        final bubbleRect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(bx, by, tp.width + pad * 2, tp.height + pad * 2),
+          const Radius.circular(6));
+        canvas.drawRRect(bubbleRect, Paint()..color = col.withValues(alpha: 0.15));
+        canvas.drawRRect(bubbleRect, Paint()..color = col.withValues(alpha: 0.5)
+          ..style = PaintingStyle.stroke..strokeWidth = 1.0);
+        // 꼬리
+        final tailPath = Path()
+          ..moveTo(x - 5, by + tp.height + pad * 2)
+          ..lineTo(x + 5, by + tp.height + pad * 2)
+          ..lineTo(x, y - 10)..close();
+        canvas.drawPath(tailPath, Paint()..color = col.withValues(alpha: 0.4));
+        canvas.drawCircle(Offset(x, y), 3, Paint()..color = col);
+        tp.paint(canvas, Offset(bx + pad, by + pad));
+        continue;
+      }
+
       // ── 기존: trendLine + isHorizontal ────────────────────────────────────
       if (ln.isHorizontal) {
         final y = pyFn(ln.startPrice);
@@ -2915,21 +3214,47 @@ class _DrawToolMeta {
 }
 
 const _kDrawToolMetas = <_DrawToolMeta>[
-  _DrawToolMeta(DrawTool.trendLine,        '추세선',         Icons.show_chart,         _DrawCategory.trendLine),
-  _DrawToolMeta(DrawTool.crossLine,        '크로스 라인',    Icons.add,                _DrawCategory.trendLine),
-  _DrawToolMeta(DrawTool.parallelChannel,  '패러렐 채널',    Icons.horizontal_rule,    _DrawCategory.trendLine),
-  _DrawToolMeta(DrawTool.fibRetracement,   '피보나치\n되돌림', Icons.stacked_line_chart, _DrawCategory.fibonacci),
-  _DrawToolMeta(DrawTool.fibExtension,     '피보나치\n확장',  Icons.trending_up,        _DrawCategory.fibonacci),
-  _DrawToolMeta(DrawTool.fibTimeZone,      '피보나치\n타임존', Icons.view_week,          _DrawCategory.fibonacci),
-  _DrawToolMeta(DrawTool.headAndShoulders, '헤드 앤\n숄더',  Icons.hdr_strong,         _DrawCategory.pattern),
-  _DrawToolMeta(DrawTool.elliottWave,      '엘리엇\n임펄스', Icons.ssid_chart,         _DrawCategory.pattern),
-  _DrawToolMeta(DrawTool.xabcdPattern,     'XABCD\n패턴',   Icons.scatter_plot,       _DrawCategory.pattern),
-  _DrawToolMeta(DrawTool.longPosition,     '롱 포지션',      Icons.arrow_upward,       _DrawCategory.forecast),
-  _DrawToolMeta(DrawTool.shortPosition,    '숏 포지션',      Icons.arrow_downward,     _DrawCategory.forecast),
-  _DrawToolMeta(DrawTool.brush,            '붓',             Icons.brush,              _DrawCategory.geometric),
-  _DrawToolMeta(DrawTool.text,             '텍스트',         Icons.text_fields,        _DrawCategory.annotation),
-  _DrawToolMeta(DrawTool.note,             '노트',           Icons.sticky_note_2,      _DrawCategory.annotation),
-  _DrawToolMeta(DrawTool.priceNote,        '프라이스\n노트', Icons.price_check,        _DrawCategory.annotation),
+  // ── 트렌드 라인 ────────────────────────────────────────────────────────────
+  _DrawToolMeta(DrawTool.trendLine,        '추세선',          Icons.show_chart,              _DrawCategory.trendLine),
+  _DrawToolMeta(DrawTool.crossLine,        '크로스 라인',     Icons.add,                     _DrawCategory.trendLine),
+  _DrawToolMeta(DrawTool.parallelChannel,  '패러렐 채널',     Icons.horizontal_rule,         _DrawCategory.trendLine),
+  _DrawToolMeta(DrawTool.horizontalLine,   '수평선',          Icons.drag_handle,             _DrawCategory.trendLine),
+  _DrawToolMeta(DrawTool.verticalLine,     '수직선',          Icons.vertical_distribute,     _DrawCategory.trendLine),
+  _DrawToolMeta(DrawTool.ray,              '레이',            Icons.arrow_right_alt,         _DrawCategory.trendLine),
+  _DrawToolMeta(DrawTool.extendedLine,     '연장선',          Icons.swap_horiz,              _DrawCategory.trendLine),
+  // ── 간과 피보나치 ──────────────────────────────────────────────────────────
+  _DrawToolMeta(DrawTool.fibRetracement,   '피보나치\n되돌림', Icons.stacked_line_chart,      _DrawCategory.fibonacci),
+  _DrawToolMeta(DrawTool.fibExtension,     '피보나치\n확장',   Icons.trending_up,             _DrawCategory.fibonacci),
+  _DrawToolMeta(DrawTool.fibTimeZone,      '피보나치\n타임존', Icons.view_week,               _DrawCategory.fibonacci),
+  _DrawToolMeta(DrawTool.fibFan,           '피보나치\n팬',     Icons.album,                   _DrawCategory.fibonacci),
+  _DrawToolMeta(DrawTool.fibArc,           '피보나치\n아크',   Icons.pie_chart_outline,       _DrawCategory.fibonacci),
+  _DrawToolMeta(DrawTool.gannFan,          '간 팬',           Icons.grain,                   _DrawCategory.fibonacci),
+  _DrawToolMeta(DrawTool.gannSquare,       '간 스퀘어',        Icons.grid_on,                 _DrawCategory.fibonacci),
+  // ── 패턴 ───────────────────────────────────────────────────────────────────
+  _DrawToolMeta(DrawTool.headAndShoulders, '헤드 앤\n숄더',   Icons.hdr_strong,              _DrawCategory.pattern),
+  _DrawToolMeta(DrawTool.elliottWave,      '엘리엇\n임펄스',  Icons.ssid_chart,              _DrawCategory.pattern),
+  _DrawToolMeta(DrawTool.xabcdPattern,     'XABCD\n패턴',    Icons.scatter_plot,            _DrawCategory.pattern),
+  _DrawToolMeta(DrawTool.abcdPattern,      'ABCD\n패턴',     Icons.account_tree,            _DrawCategory.pattern),
+  _DrawToolMeta(DrawTool.trianglePattern,  '삼각형\n패턴',    Icons.change_history,          _DrawCategory.pattern),
+  // ── 예측 및 측정 ───────────────────────────────────────────────────────────
+  _DrawToolMeta(DrawTool.longPosition,     '롱 포지션',       Icons.arrow_upward,            _DrawCategory.forecast),
+  _DrawToolMeta(DrawTool.shortPosition,    '숏 포지션',       Icons.arrow_downward,          _DrawCategory.forecast),
+  _DrawToolMeta(DrawTool.priceRange,       '가격 범위',       Icons.height,                  _DrawCategory.forecast),
+  _DrawToolMeta(DrawTool.dateRange,        '날짜 범위',       Icons.date_range,              _DrawCategory.forecast),
+  _DrawToolMeta(DrawTool.barsPattern,      '바 측정',         Icons.straighten,              _DrawCategory.forecast),
+  // ── 기하 도형 ──────────────────────────────────────────────────────────────
+  _DrawToolMeta(DrawTool.rectangle,        '사각형',          Icons.rectangle_outlined,      _DrawCategory.geometric),
+  _DrawToolMeta(DrawTool.ellipse,          '타원',            Icons.circle_outlined,         _DrawCategory.geometric),
+  _DrawToolMeta(DrawTool.triangle,         '삼각형',          Icons.change_history_outlined, _DrawCategory.geometric),
+  _DrawToolMeta(DrawTool.arc,              '아크',            Icons.roundabout_left,         _DrawCategory.geometric),
+  _DrawToolMeta(DrawTool.brush,            '붓',              Icons.brush,                   _DrawCategory.geometric),
+  // ── 주석 ───────────────────────────────────────────────────────────────────
+  _DrawToolMeta(DrawTool.text,             '텍스트',          Icons.text_fields,             _DrawCategory.annotation),
+  _DrawToolMeta(DrawTool.note,             '노트',            Icons.sticky_note_2,           _DrawCategory.annotation),
+  _DrawToolMeta(DrawTool.priceNote,        '프라이스\n노트',  Icons.price_check,             _DrawCategory.annotation),
+  _DrawToolMeta(DrawTool.arrowUp,          '위 화살표',       Icons.north,                   _DrawCategory.annotation),
+  _DrawToolMeta(DrawTool.arrowDown,        '아래 화살표',     Icons.south,                   _DrawCategory.annotation),
+  _DrawToolMeta(DrawTool.callout,          '말풍선',          Icons.chat_bubble_outline,     _DrawCategory.annotation),
 ];
 
 class _DrawingPickerSheet extends StatefulWidget {
