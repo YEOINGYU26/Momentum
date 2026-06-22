@@ -63,7 +63,7 @@ class _MiniChartSheetState extends State<MiniChartSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final color = widget.isUp ? AppColors.green : AppColors.red;
+    final color = widget.isUp ? AppColors.red : AppColors.blue;
     final avatarColor = _avatarColors[widget.ticker.hashCode.abs() % _avatarColors.length];
     final label = widget.ticker.length > 4 ? widget.ticker.substring(0, 4) : widget.ticker;
 

@@ -57,7 +57,7 @@ enum DrawTool {
   none,
   // 트렌드 라인
   trendLine, crossLine, parallelChannel,
-  horizontalLine, verticalLine, ray, extendedLine,
+  horizontalLine, verticalLine,
   // 간과 피보나치
   fibRetracement, fibExtension, fibTimeZone,
   fibFan, fibArc, gannFan, gannSquare,
@@ -91,7 +91,7 @@ extension _DrawToolX on DrawTool {
       case DrawTool.text: case DrawTool.note: case DrawTool.priceNote:
       case DrawTool.callout: return 1;
       // 2점 도구
-      case DrawTool.trendLine: case DrawTool.ray: case DrawTool.extendedLine:
+      case DrawTool.trendLine:
       case DrawTool.fibRetracement: case DrawTool.fibTimeZone:
       case DrawTool.fibFan: case DrawTool.fibArc:
       case DrawTool.gannFan: case DrawTool.gannSquare:
@@ -2826,25 +2826,6 @@ class _Painter extends CustomPainter {
         continue;
       }
 
-      if ((ln.drawType == DrawTool.ray || ln.drawType == DrawTool.extendedLine)
-          && ln.pts.length >= 2) {
-        final x0 = txToX(ln.pts[0].time), y0 = pyFn(ln.pts[0].price);
-        final x1 = txToX(ln.pts[1].time), y1 = pyFn(ln.pts[1].price);
-        final dx = x1 - x0, dy = y1 - y0;
-        if (dx.abs() < 0.5) { seg(Offset(x0, 0), Offset(x0, pH)); continue; }
-        // 오른쪽 끝 클리핑
-        final tRight = (chartW - x0) / dx;
-        final yRight = y0 + dy * tRight;
-        seg(Offset(x1, y1), Offset(chartW, yRight));
-        if (ln.drawType == DrawTool.extendedLine) {
-          final tLeft = (0 - x0) / dx;
-          seg(Offset(x0, y0), Offset(0, y0 + dy * tLeft));
-        } else {
-          seg(Offset(x0, y0), Offset(x1, y1));
-        }
-        continue;
-      }
-
       // ── 간과 피보나치 확장 ────────────────────────────────────────────────
       if (ln.drawType == DrawTool.fibFan && ln.pts.length >= 2) {
         final x0 = txToX(ln.pts[0].time), y0 = pyFn(ln.pts[0].price);
@@ -3273,8 +3254,6 @@ const _kDrawToolMetas = <_DrawToolMeta>[
   _DrawToolMeta(DrawTool.parallelChannel,  '패러렐 채널',     Icons.horizontal_rule,         _DrawCategory.trendLine),
   _DrawToolMeta(DrawTool.horizontalLine,   '수평선',          Icons.drag_handle,             _DrawCategory.trendLine),
   _DrawToolMeta(DrawTool.verticalLine,     '수직선',          Icons.vertical_distribute,     _DrawCategory.trendLine),
-  _DrawToolMeta(DrawTool.ray,              '레이',            Icons.arrow_right_alt,         _DrawCategory.trendLine),
-  _DrawToolMeta(DrawTool.extendedLine,     '연장선',          Icons.swap_horiz,              _DrawCategory.trendLine),
   // ── 간과 피보나치 ──────────────────────────────────────────────────────────
   _DrawToolMeta(DrawTool.fibRetracement,   '피보나치\n되돌림', Icons.stacked_line_chart,      _DrawCategory.fibonacci),
   _DrawToolMeta(DrawTool.fibExtension,     '피보나치\n확장',   Icons.trending_up,             _DrawCategory.fibonacci),
