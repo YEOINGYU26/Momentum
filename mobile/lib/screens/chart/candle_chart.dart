@@ -259,8 +259,9 @@ class _CandleChartState extends State<CandleChart> {
 
   Offset?    _cross;
   CandleData? _crossCandle;
-  bool    _longPress   = false;
-  bool    _crossDrag   = false;  // 십자선 근처 pan → 십자선 이동 모드
+  bool    _longPress       = false;
+  bool    _suppressNextTap = false; // 롱프레스로 십자선 표시 직후 탭 무시
+  bool    _crossDrag   = false;  // 드래그 시 십자선 이동 모드
   Offset? _lpFinger;
   Offset? _lpCrossStart;
   Offset? _lpDownPos;
@@ -902,6 +903,7 @@ class _CandleChartState extends State<CandleChart> {
                   _lpTimer = null;
                   if (!mounted) return;
                   _longPress = true;
+                  _suppressNextTap = true; // 롱프레스로 표시된 직후 탭은 무시
                   _lpFinger  = _lpDownPos;
                   if (_cross == null && _lpDownPos != null) {
                     _showCross(_lpDownPos!);
@@ -960,11 +962,8 @@ class _CandleChartState extends State<CandleChart> {
                 }
                 if (!_inPriceAxis && _cross != null &&
                     d.pointerCount == 1 && _phase == DrawPhase.idle) {
-                  final t = d.localFocalPoint;
-                  if ((t.dx - _cross!.dx).abs() < 28 || (t.dy - _cross!.dy).abs() < 28) {
-                    _crossDrag = true; _lpFinger = t; _lpCrossStart = _cross;
-                    return;
-                  }
+                  _crossDrag = true; _lpFinger = d.localFocalPoint; _lpCrossStart = _cross;
+                  return;
                 }
                 _startVis = _vis; _startPz = _pzoom;
               },
@@ -1048,8 +1047,9 @@ class _CandleChartState extends State<CandleChart> {
               onTapDown: (d) { _lastTouch = d.localPosition; },
               onTap: () {
                 if (_drawing) { _handleDrawTap(); return; }
+                if (_suppressNextTap) { _suppressNextTap = false; return; }
                 final touch = _lastTouch;
-                if (touch == null || _longPress) { return; }
+                if (touch == null) { return; }
                 if (touch.dx < _chartW) { _handleTapOnChart(touch); }
               },
               child: CustomPaint(

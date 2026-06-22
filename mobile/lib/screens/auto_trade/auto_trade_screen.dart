@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
 import '../../core/app_colors.dart';
 import '../../core/constants.dart';
+import '../../models/chart_line_info.dart';
 import '../../models/price_alert_model.dart';
 import '../../models/scheduler_job.dart';
 import '../../providers/job_provider.dart';
@@ -114,10 +115,10 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
           .timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         final o = jsonDecode(res.body) as Map<String, dynamic>;
-        final price = (o['current_price'] as num?)?.toDouble() ?? 0;
-        final rate  = (o['change_rate'] as num?)?.toDouble() ?? 0;
-        final sign  = o['change_sign'] as String? ?? '3';
-        final up    = sign == '1' || sign == '2';
+        final price  = (o['current_price'] as num?)?.toDouble() ?? 0;
+        final change = (o['change'] as num?)?.toDouble() ?? 0;
+        final rate   = (o['change_rate'] as num?)?.toDouble() ?? 0;
+        final up     = change > 0;
         if (mounted) {
           setState(() {
             _isUp = up;
@@ -151,11 +152,8 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
                 child: TabBarView(
                   controller: _tab,
                   children: [
+                    _ConditionTradeTab(selected: _selectedSymbol),
                     _ConditionalTab(
-                      selected: _selectedSymbol,
-                      currentPrice: _currentPrice,
-                    ),
-                    _StrategyTab(
                       selected: _selectedSymbol,
                       currentPrice: _currentPrice,
                     ),
@@ -358,8 +356,8 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
           labelStyle:
               const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           tabs: const [
-            Tab(text: '지정가 매매'),
             Tab(text: '조건 매매'),
+            Tab(text: '지정가 매매'),
             Tab(text: '전문가 전략'),
           ],
         ),
@@ -368,7 +366,561 @@ class _AutoTradeScreenState extends State<AutoTradeScreen>
   }
 }
 
-// ─── Tab 1: 예약 매매 ─────────────────────────────────────────────────────────
+// ─── Tab 0: 조건 매매 ────────────────────────────────────────────────────────
+
+class _ConditionTradeTab extends StatefulWidget {
+  final SymbolInfo? selected;
+  const _ConditionTradeTab({this.selected});
+  @override
+  State<_ConditionTradeTab> createState() => _ConditionTradeTabState();
+}
+
+class _ConditionTradeTabState extends State<_ConditionTradeTab> {
+  // ── 매매선 트리거 ──
+  int  _lineBuyQty    = 10;
+  int  _lineSellQty   = 10;
+  bool _submittingBuy  = false;
+  bool _submittingSell = false;
+
+  // ── 지표 조건 ──
+  String _indicator    = 'rsi';
+  String _timeframe    = 'D';
+  int    _indQty       = 10;
+  int    _intervalSec  = 60;
+  int    _rsiBuyThr    = 30;
+  int    _rsiSellThr   = 70;
+  bool   _submittingInd = false;
+
+  static const _indicators = [
+    _IndMeta(id: 'rsi',            name: 'RSI',       badge: 'RSI(14)',   icon: Icons.show_chart,      color: AppColors.green,        buyDesc: 'RSI 과매도 기준 이하 매수',   sellDesc: 'RSI 과매수 기준 이상 매도'),
+    _IndMeta(id: 'moving_average', name: '골든크로스', badge: 'MA 5/20',  icon: Icons.trending_up,     color: Color(0xFFF2B41E),      buyDesc: '단기MA가 장기MA 상향 돌파 시 매수', sellDesc: '단기MA가 장기MA 하향 돌파 시 매도'),
+    _IndMeta(id: 'scalping',       name: '볼린저밴드', badge: 'BB(20,2)', icon: Icons.speed,            color: Color(0xFF6C63FF),      buyDesc: '볼린저 하단(−2σ) 이탈 시 매수', sellDesc: '볼린저 상단(+2σ) 도달 시 매도'),
+    _IndMeta(id: 'ichimoku',       name: '이치모쿠',   badge: 'Ichimoku', icon: Icons.layers_outlined,  color: Color(0xFF00BCD4),      buyDesc: '구름대 하단 지지선 근접 시 매수', sellDesc: '구름대 상단 저항선 도달 시 매도'),
+  ];
+
+  static const _timeframes = [
+    (label: '일봉', value: 'D'),
+    (label: '주봉', value: 'W'),
+    (label: '월봉', value: 'M'),
+    (label: '1년봉', value: 'Y'),
+  ];
+
+  static const _intervals = [
+    (label: '30초', sec: 30),
+    (label: '1분',  sec: 60),
+    (label: '5분',  sec: 300),
+    (label: '15분', sec: 900),
+    (label: '1시간', sec: 3600),
+  ];
+
+  static const _rsiBuyOptions  = [20, 25, 30, 35];
+  static const _rsiSellOptions = [65, 70, 75, 80];
+
+  void _snack(String msg, {bool success = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: success ? AppColors.green : AppColors.red,
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  String _linePriceLabel(ChartLineInfo l) {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final p = l.priceAt(now);
+    return l.isHorizontal ? '${_fmtNum(p)}원' : '약 ${_fmtNum(p)}원';
+  }
+
+  Future<void> _submitLineCondition(bool isBuy, List<ChartLineInfo> lines) async {
+    final s = widget.selected;
+    if (s == null) return;
+    if (isBuy) { setState(() => _submittingBuy = true); }
+    else { setState(() => _submittingSell = true); }
+    try {
+      final qty = isBuy ? _lineBuyQty : _lineSellQty;
+      for (final l in lines) {
+        await context.read<AlertProvider>().addAlert(
+          ticker: s.ticker,
+          side: isBuy ? 'buy' : 'sell',
+          quantity: qty,
+          lineStartTime:  l.startTime,
+          lineStartPrice: l.startPrice,
+          lineEndTime:    l.endTime,
+          lineEndPrice:   l.endPrice,
+        );
+      }
+      if (mounted) _snack('${isBuy ? '매수' : '매도'} 조건이 등록됐습니다', success: true);
+    } catch (e) {
+      if (mounted) _snack(e.toString());
+    } finally {
+      if (mounted) {
+        if (isBuy) { setState(() => _submittingBuy = false); }
+        else { setState(() => _submittingSell = false); }
+      }
+    }
+  }
+
+  Future<void> _submitIndicator() async {
+    final s = widget.selected;
+    if (s == null) { _snack('종목을 선택하세요'); return; }
+    setState(() => _submittingInd = true);
+    try {
+      await context.read<JobProvider>().addJob(
+        ticker: s.ticker,
+        strategyName: _indicator,
+        quantity: _indQty,
+        intervalSeconds: _intervalSec,
+        dataInterval: _timeframe,
+      );
+      if (mounted) _snack('지표 조건이 등록됐습니다', success: true);
+    } catch (e) {
+      if (mounted) _snack(e.toString());
+    } finally {
+      if (mounted) setState(() => _submittingInd = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sym = widget.selected;
+    final allLines = sym != null
+        ? context.watch<ChartProvider>().getLinesForTicker(sym.ticker)
+        : <ChartLineInfo>[];
+    final buyLines  = allLines.where((l) => l.role == LineRole.buyTrigger).toList();
+    final sellLines = allLines.where((l) => l.role == LineRole.sellTrigger).toList();
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+      children: [
+        // ── 매매선 트리거 ──────────────────────────
+        _buildSectionHeader(Icons.timeline, '매매선 트리거', '차트 추세선 기반 예약 주문'),
+        const SizedBox(height: 12),
+        if (sym == null)
+          _buildNoSymbolHint()
+        else if (buyLines.isEmpty && sellLines.isEmpty)
+          _buildNoLineHint()
+        else ...[
+          if (buyLines.isNotEmpty) ...[
+            _buildLineTriggerCard(
+              lines: buyLines, isBuy: true,
+              qty: _lineBuyQty,
+              onQtyChanged: (v) => setState(() => _lineBuyQty = v),
+              submitting: _submittingBuy,
+              onSubmit: () => _submitLineCondition(true, buyLines),
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (sellLines.isNotEmpty)
+            _buildLineTriggerCard(
+              lines: sellLines, isBuy: false,
+              qty: _lineSellQty,
+              onQtyChanged: (v) => setState(() => _lineSellQty = v),
+              submitting: _submittingSell,
+              onSubmit: () => _submitLineCondition(false, sellLines),
+            ),
+        ],
+
+        const SizedBox(height: 28),
+
+        // ── 지표 조건 ──────────────────────────────
+        _buildSectionHeader(Icons.analytics_outlined, '지표 조건', '기술 지표 기반 자동 전략'),
+        const SizedBox(height: 12),
+        if (sym == null)
+          _buildNoSymbolHint()
+        else ...[
+          _buildIndicatorGrid(),
+          const SizedBox(height: 16),
+          _buildTimeframeChips(),
+          const SizedBox(height: 16),
+          _buildIndicatorConditionCard(),
+          const SizedBox(height: 14),
+          _buildIndQuantityRow(),
+          const SizedBox(height: 14),
+          _buildIntervalChips(),
+          const SizedBox(height: 16),
+          GestureDetector(
+            onTap: _submittingInd ? null : _submitIndicator,
+            child: Container(
+              height: 52,
+              decoration: BoxDecoration(
+                color: const Color(0xFF6C63FF),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Center(
+                child: _submittingInd
+                    ? const SizedBox(width: 20, height: 20,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : const Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.bolt, color: Colors.white, size: 18),
+                        SizedBox(width: 6),
+                        Text('지표 조건 등록',
+                            style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                      ]),
+              ),
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 28),
+        _SectionLabel('대기 중인 매매선 예약'),
+        const SizedBox(height: 12),
+        _PendingAlertsList(),
+        const SizedBox(height: 28),
+        _SectionLabel('실행 중인 지표 전략'),
+        const SizedBox(height: 12),
+        _RunningJobsList(),
+      ],
+    );
+  }
+
+  Widget _buildSectionHeader(IconData icon, String title, String sub) {
+    return Row(children: [
+      Container(
+        width: 36, height: 36,
+        decoration: BoxDecoration(
+          color: AppColors.green.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: AppColors.green, size: 18),
+      ),
+      const SizedBox(width: 10),
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+        Text(sub, style: const TextStyle(color: AppColors.gray, fontSize: 11)),
+      ]),
+    ]);
+  }
+
+  Widget _buildNoSymbolHint() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: const Row(children: [
+        Icon(Icons.info_outline, color: AppColors.gray, size: 16),
+        SizedBox(width: 8),
+        Text('위 검색창에서 종목을 선택하세요',
+            style: TextStyle(color: AppColors.gray, fontSize: 13)),
+      ]),
+    );
+  }
+
+  Widget _buildNoLineHint() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF26A69A).withValues(alpha: 0.3)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Icon(Icons.draw_outlined, color: Color(0xFF26A69A), size: 16),
+          SizedBox(width: 6),
+          Text('차트에 매매선을 그려주세요',
+              style: TextStyle(color: Color(0xFF26A69A), fontSize: 13, fontWeight: FontWeight.w600)),
+        ]),
+        const SizedBox(height: 8),
+        const Text(
+          '차트 탭에서 추세선을 그리고, 선을 탭해 툴바에서\n매수선 또는 매도선 역할을 지정하면 조건 등록이 가능합니다.',
+          style: TextStyle(color: AppColors.gray, fontSize: 12, height: 1.5),
+        ),
+        const SizedBox(height: 10),
+        const Row(children: [
+          _MiniTag('매수선', Color(0xFF26A69A)),
+          SizedBox(width: 6),
+          _MiniTag('매도선', AppColors.red),
+          SizedBox(width: 8),
+          Text('역할 지정 후 여기서 조건 등록', style: TextStyle(color: AppColors.gray, fontSize: 10)),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _buildLineTriggerCard({
+    required List<ChartLineInfo> lines,
+    required bool isBuy,
+    required int qty,
+    required ValueChanged<int> onQtyChanged,
+    required bool submitting,
+    required VoidCallback onSubmit,
+  }) {
+    final color = isBuy ? const Color(0xFF26A69A) : AppColors.red;
+    final label = isBuy ? '매수선' : '매도선';
+    final icon  = isBuy ? Icons.arrow_upward : Icons.arrow_downward;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, color: color, size: 14),
+          const SizedBox(width: 6),
+          Text('$label  ${lines.length}개 감지',
+              style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w600)),
+        ]),
+        const SizedBox(height: 10),
+        ...lines.asMap().entries.map((e) => Padding(
+          padding: const EdgeInsets.only(bottom: 5),
+          child: Row(children: [
+            Container(
+              width: 18, height: 18,
+              decoration: BoxDecoration(color: color.withValues(alpha: 0.15), shape: BoxShape.circle),
+              child: Center(child: Text('${e.key + 1}',
+                  style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.bold))),
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: Text(
+              '${e.value.isHorizontal ? '수평선' : '추세선'}  ${_linePriceLabel(e.value)}',
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            )),
+          ]),
+        )),
+        const SizedBox(height: 10),
+        const Divider(height: 1, color: Color(0xFF252A34)),
+        const SizedBox(height: 10),
+        Row(children: [
+          const Text('수량', style: TextStyle(color: AppColors.gray, fontSize: 13)),
+          const Spacer(),
+          _CounterButton(icon: Icons.remove, onTap: () { if (qty > 1) onQtyChanged(qty - 1); }),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Text('$qty주', style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+          ),
+          _CounterButton(icon: Icons.add, onTap: () => onQtyChanged(qty + 1)),
+        ]),
+        const SizedBox(height: 10),
+        GestureDetector(
+          onTap: submitting ? null : onSubmit,
+          child: Container(
+            height: 44,
+            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+            child: Center(
+              child: submitting
+                  ? const SizedBox(width: 18, height: 18,
+                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : Text('$label 조건 등록',
+                      style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _buildIndicatorGrid() {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4, mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 0.82,
+      ),
+      itemCount: _indicators.length,
+      itemBuilder: (_, i) {
+        final ind = _indicators[i];
+        final sel = _indicator == ind.id;
+        return GestureDetector(
+          onTap: () => setState(() => _indicator = ind.id),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: sel ? ind.color.withValues(alpha: 0.15) : AppColors.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: sel ? ind.color : Colors.transparent, width: 1.5),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(ind.icon, color: ind.color, size: 18),
+                const SizedBox(height: 4),
+                Text(ind.name, style: TextStyle(
+                    color: sel ? ind.color : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 2),
+                Text(ind.badge, style: TextStyle(color: ind.color.withValues(alpha: 0.8), fontSize: 9)),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTimeframeChips() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const _SectionLabel('봉 주기'),
+      const SizedBox(height: 8),
+      Row(children: _timeframes.map((tf) {
+        final sel = _timeframe == tf.value;
+        return Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: GestureDetector(
+            onTap: () => setState(() => _timeframe = tf.value),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: sel ? AppColors.green : AppColors.card,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(tf.label, style: TextStyle(
+                  color: sel ? AppColors.bg : AppColors.gray,
+                  fontSize: 13, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        );
+      }).toList()),
+    ]);
+  }
+
+  Widget _buildIndicatorConditionCard() {
+    final ind = _indicators.firstWhere((i) => i.id == _indicator);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: ind.color.withValues(alpha: 0.25)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // 매수 조건
+        const Row(children: [
+          Icon(Icons.arrow_upward, color: Color(0xFF26A69A), size: 13),
+          SizedBox(width: 5),
+          Text('매수 조건', style: TextStyle(color: Color(0xFF26A69A), fontSize: 12, fontWeight: FontWeight.w600)),
+        ]),
+        const SizedBox(height: 8),
+        if (ind.id == 'rsi') ...[
+          Text('RSI < $_rsiBuyThr  일 때 매수',
+              style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          const SizedBox(height: 8),
+          Wrap(spacing: 6, children: _rsiBuyOptions.map((v) {
+            final sel = _rsiBuyThr == v;
+            return GestureDetector(
+              onTap: () => setState(() => _rsiBuyThr = v),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: sel ? const Color(0xFF26A69A) : AppColors.bg,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: sel ? const Color(0xFF26A69A) : AppColors.gray.withValues(alpha: 0.3)),
+                ),
+                child: Text('$v', style: TextStyle(
+                    color: sel ? Colors.white : AppColors.gray,
+                    fontSize: 12, fontWeight: FontWeight.w600)),
+              ),
+            );
+          }).toList()),
+        ] else
+          Text(ind.buyDesc, style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.4)),
+
+        const SizedBox(height: 14),
+        const Divider(height: 1, color: Color(0xFF252A34)),
+        const SizedBox(height: 14),
+
+        // 매도 조건
+        const Row(children: [
+          Icon(Icons.arrow_downward, color: AppColors.red, size: 13),
+          SizedBox(width: 5),
+          Text('매도 조건', style: TextStyle(color: AppColors.red, fontSize: 12, fontWeight: FontWeight.w600)),
+        ]),
+        const SizedBox(height: 8),
+        if (ind.id == 'rsi') ...[
+          Text('RSI > $_rsiSellThr  일 때 매도',
+              style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          const SizedBox(height: 8),
+          Wrap(spacing: 6, children: _rsiSellOptions.map((v) {
+            final sel = _rsiSellThr == v;
+            return GestureDetector(
+              onTap: () => setState(() => _rsiSellThr = v),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: sel ? AppColors.red : AppColors.bg,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: sel ? AppColors.red : AppColors.gray.withValues(alpha: 0.3)),
+                ),
+                child: Text('$v', style: TextStyle(
+                    color: sel ? Colors.white : AppColors.gray,
+                    fontSize: 12, fontWeight: FontWeight.w600)),
+              ),
+            );
+          }).toList()),
+        ] else
+          Text(ind.sellDesc, style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.4)),
+
+        if (ind.id == 'ichimoku') ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppColors.yellow.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.construction_outlined, color: AppColors.yellow, size: 12),
+              SizedBox(width: 6),
+              Text('백엔드 구현 예정', style: TextStyle(color: AppColors.yellow, fontSize: 11)),
+            ]),
+          ),
+        ],
+      ]),
+    );
+  }
+
+  Widget _buildIndQuantityRow() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(12)),
+      child: Row(children: [
+        const Text('수량', style: TextStyle(color: AppColors.gray, fontSize: 13)),
+        const Spacer(),
+        _CounterButton(icon: Icons.remove, onTap: () { if (_indQty > 1) setState(() => _indQty--); }),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Text('$_indQty주', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+        ),
+        _CounterButton(icon: Icons.add, onTap: () => setState(() => _indQty++)),
+      ]),
+    );
+  }
+
+  Widget _buildIntervalChips() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const _SectionLabel('실행 간격'),
+      const SizedBox(height: 8),
+      Wrap(spacing: 8, runSpacing: 6, children: _intervals.map((iv) {
+        final sel = _intervalSec == iv.sec;
+        return GestureDetector(
+          onTap: () => setState(() => _intervalSec = iv.sec),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: sel ? AppColors.green : AppColors.card,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(iv.label, style: TextStyle(
+                color: sel ? AppColors.bg : AppColors.gray,
+                fontSize: 13, fontWeight: FontWeight.w600)),
+          ),
+        );
+      }).toList()),
+    ]);
+  }
+}
+
+// ─── Tab 1: 지정가 매매 ───────────────────────────────────────────────────────
 
 class _ConditionalTab extends StatefulWidget {
   final SymbolInfo? selected;
@@ -591,310 +1143,6 @@ class _ConditionalTabState extends State<_ConditionalTab> {
   }
 }
 
-// ─── Tab 2: 전략 자동매매 ─────────────────────────────────────────────────────
-
-class _StrategyTab extends StatefulWidget {
-  final SymbolInfo? selected;
-  final String? currentPrice;
-  const _StrategyTab({this.selected, this.currentPrice});
-  @override
-  State<_StrategyTab> createState() => _StrategyTabState();
-}
-
-class _StrategyTabState extends State<_StrategyTab> {
-  String _strategyId = 'rsi';
-  int _quantity = 10;
-  int _intervalSec = 60;
-  String _dataInterval = 'D';
-  bool _submitting = false;
-
-  static const _dataIntervals = [
-    (label: '일봉', value: 'D'),
-    (label: '주봉', value: 'W'),
-    (label: '월봉', value: 'M'),
-  ];
-
-  static const _strategies = [
-    _StrategyMeta(
-      id: 'rsi',
-      name: 'RSI',
-      badge: 'RSI(14)',
-      desc: '과매도 30↓ 매수\n과매수 70↑ 매도',
-      icon: Icons.show_chart,
-      color: AppColors.green,
-    ),
-    _StrategyMeta(
-      id: 'moving_average',
-      name: '골든크로스',
-      badge: 'MA 5/20',
-      desc: '단기 > 장기 MA\n돌파 시 매수 진입',
-      icon: Icons.trending_up,
-      color: Color(0xFFF2B41E),
-    ),
-    _StrategyMeta(
-      id: 'scalping',
-      name: '볼린저밴드',
-      badge: 'BB(20,2)',
-      desc: '하단 이탈 매수\n상단 도달 시 매도',
-      icon: Icons.speed,
-      color: Color(0xFF6C63FF),
-    ),
-  ];
-
-  static const _intervals = [
-    (label: '30초', sec: 30),
-    (label: '1분',  sec: 60),
-    (label: '5분',  sec: 300),
-    (label: '15분', sec: 900),
-    (label: '1시간', sec: 3600),
-  ];
-
-  Future<void> _submit() async {
-    final s = widget.selected;
-    if (s == null) {
-      _snack('종목을 선택하세요');
-      return;
-    }
-    setState(() => _submitting = true);
-    try {
-      await context.read<JobProvider>().addJob(
-        ticker: s.ticker,
-        strategyName: _strategyId,
-        quantity: _quantity,
-        intervalSeconds: _intervalSec,
-        dataInterval: _dataInterval,
-      );
-      if (mounted) _snack('전략이 등록됐습니다', success: true);
-    } catch (e) {
-      if (mounted) _snack(e.toString());
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
-  }
-
-  void _snack(String msg, {bool success = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor: success ? AppColors.green : AppColors.red,
-      behavior: SnackBarBehavior.floating,
-    ));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-      children: [
-        if (widget.selected == null)
-          _buildNoSymbolHint()
-        else ...[
-          _SectionLabel('전략 선택'),
-          const SizedBox(height: 10),
-          _buildStrategyGrid(),
-          const SizedBox(height: 20),
-          _SectionLabel('데이터 주기'),
-          const SizedBox(height: 10),
-          _buildDataIntervalChips(),
-          const SizedBox(height: 20),
-          _SectionLabel('수량'),
-          const SizedBox(height: 10),
-          _buildQuantityRow(),
-          const SizedBox(height: 20),
-          _SectionLabel('실행 간격'),
-          const SizedBox(height: 10),
-          _buildIntervalChips(),
-          const SizedBox(height: 24),
-          _StartButton(loading: _submitting, onTap: _submit),
-        ],
-        const SizedBox(height: 28),
-        _SectionLabel('실행 중인 전략'),
-        const SizedBox(height: 12),
-        _RunningJobsList(),
-      ],
-    );
-  }
-
-  Widget _buildNoSymbolHint() {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-      margin: const EdgeInsets.only(bottom: 20),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: const Row(
-        children: [
-          Icon(Icons.info_outline, color: AppColors.gray, size: 18),
-          SizedBox(width: 10),
-          Text('위 검색창에서 종목을 선택하세요',
-              style: TextStyle(color: AppColors.gray, fontSize: 13)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStrategyGrid() {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-        childAspectRatio: 0.82,
-      ),
-      itemCount: _strategies.length,
-      itemBuilder: (_, i) {
-        final s = _strategies[i];
-        final sel = _strategyId == s.id;
-        return GestureDetector(
-          onTap: () => setState(() => _strategyId = s.id),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: sel ? s.color.withValues(alpha: 0.15) : AppColors.card,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: sel ? s.color : Colors.transparent,
-                width: 1.5,
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(s.icon, color: s.color, size: 22),
-                const SizedBox(height: 8),
-                Text(s.name,
-                    style: TextStyle(
-                        color: sel ? s.color : Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: s.color.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(s.badge,
-                      style: TextStyle(
-                          color: s.color,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w600)),
-                ),
-                const SizedBox(height: 6),
-                Text(s.desc,
-                    style: const TextStyle(
-                        color: AppColors.gray, fontSize: 10, height: 1.5)),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildQuantityRow() {
-    return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          const Text('수량',
-              style: TextStyle(color: AppColors.gray, fontSize: 13)),
-          const Spacer(),
-          _CounterButton(
-            icon: Icons.remove,
-            onTap: () {
-              if (_quantity > 1) setState(() => _quantity--);
-            },
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text('$_quantity주',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold)),
-          ),
-          _CounterButton(
-            icon: Icons.add,
-            onTap: () => setState(() => _quantity++),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDataIntervalChips() {
-    return Wrap(
-      spacing: 8,
-      children: _dataIntervals.map((di) {
-        final sel = _dataInterval == di.value;
-        return GestureDetector(
-          onTap: () => setState(() => _dataInterval = di.value),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: sel
-                  ? const Color(0xFF6C63FF)
-                  : AppColors.card,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: sel
-                    ? const Color(0xFF6C63FF)
-                    : Colors.transparent,
-              ),
-            ),
-            child: Text(di.label,
-                style: TextStyle(
-                    color: sel ? Colors.white : AppColors.gray,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600)),
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _buildIntervalChips() {
-    return Wrap(
-      spacing: 8,
-      children: _intervals.map((iv) {
-        final sel = _intervalSec == iv.sec;
-        return GestureDetector(
-          onTap: () => setState(() => _intervalSec = iv.sec),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: sel ? AppColors.green : AppColors.card,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: sel ? AppColors.green : Colors.transparent,
-              ),
-            ),
-            child: Text(iv.label,
-                style: TextStyle(
-                    color: sel ? AppColors.bg : AppColors.gray,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600)),
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
 
 // ─── Pending Alerts List (종목별 그룹화) ──────────────────────────────────────
 
@@ -1480,46 +1728,6 @@ class _SideButton extends StatelessWidget {
   }
 }
 
-class _StartButton extends StatelessWidget {
-  final bool loading;
-  final VoidCallback onTap;
-  const _StartButton({required this.loading, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: loading ? null : onTap,
-      child: Container(
-        height: 52,
-        decoration: BoxDecoration(
-          color: AppColors.green,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Center(
-          child: loading
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                      color: AppColors.bg, strokeWidth: 2))
-              : const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.bolt, color: AppColors.bg, size: 20),
-                    SizedBox(width: 6),
-                    Text('자동매매 시작',
-                        style: TextStyle(
-                            color: AppColors.bg,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold)),
-                  ],
-                ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ConditionalRegisterButton extends StatelessWidget {
   final String side;
   final bool loading;
@@ -1591,19 +1799,20 @@ Widget _emptyState(IconData icon, String title, String sub) {
   );
 }
 
-// ─── Strategy metadata ────────────────────────────────────────────────────────
+// ─── Indicator metadata ───────────────────────────────────────────────────────
 
-class _StrategyMeta {
-  final String id, name, badge, desc;
+class _IndMeta {
+  final String id, name, badge, buyDesc, sellDesc;
   final IconData icon;
   final Color color;
-  const _StrategyMeta({
+  const _IndMeta({
     required this.id,
     required this.name,
     required this.badge,
-    required this.desc,
     required this.icon,
     required this.color,
+    required this.buyDesc,
+    required this.sellDesc,
   });
 }
 
