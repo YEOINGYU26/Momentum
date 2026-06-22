@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../core/app_colors.dart';
@@ -258,10 +259,12 @@ class _CandleChartState extends State<CandleChart> {
 
   Offset?    _cross;
   CandleData? _crossCandle;
-  bool    _longPress   = false;  // 실제 onLongPress 시퀀스 중에만 true
+  bool    _longPress   = false;
   bool    _crossDrag   = false;  // 십자선 근처 pan → 십자선 이동 모드
   Offset? _lpFinger;
   Offset? _lpCrossStart;
+  Offset? _lpDownPos;
+  Timer?  _lpTimer;
   Offset? _lastTouch;
   bool    _inPriceAxis = false;
 
@@ -890,7 +893,48 @@ class _CandleChartState extends State<CandleChart> {
         _buildToolbar(),
         Expanded(
           child: Stack(children: [
-            GestureDetector(
+            Listener(
+              onPointerDown: (e) {
+                if (_drawing) return;
+                _lpDownPos = e.localPosition;
+                _lpTimer?.cancel();
+                _lpTimer = Timer(const Duration(milliseconds: 200), () {
+                  _lpTimer = null;
+                  if (!mounted) return;
+                  _longPress = true;
+                  _lpFinger  = _lpDownPos;
+                  if (_cross == null && _lpDownPos != null) {
+                    _showCross(_lpDownPos!);
+                  } else {
+                    setState(() {});
+                  }
+                  _lpCrossStart = _cross;
+                });
+              },
+              onPointerMove: (e) {
+                if (_lpTimer == null) return;
+                final moved = (_lpDownPos == null)
+                    ? 0.0
+                    : (e.localPosition - _lpDownPos!).distance;
+                if (moved > 8) { _lpTimer!.cancel(); _lpTimer = null; }
+              },
+              onPointerUp: (_) {
+                _lpTimer?.cancel(); _lpTimer = null;
+                if (_longPress) {
+                  setState(() {
+                    _longPress = false; _lpFinger = null; _lpCrossStart = null;
+                  });
+                }
+              },
+              onPointerCancel: (_) {
+                _lpTimer?.cancel(); _lpTimer = null;
+                if (_longPress) {
+                  setState(() {
+                    _longPress = false; _lpFinger = null; _lpCrossStart = null;
+                  });
+                }
+              },
+              child: GestureDetector(
               onScaleStart: (d) {
                 _lastTouch = d.localFocalPoint;
                 if (_tool == DrawTool.brush && d.pointerCount == 1) {
@@ -1008,19 +1052,6 @@ class _CandleChartState extends State<CandleChart> {
                 if (touch == null || _longPress) { return; }
                 if (touch.dx < _chartW) { _handleTapOnChart(touch); }
               },
-              onLongPressStart: (d) {
-                if (_drawing) { return; }
-                _longPress = true; _lpFinger = d.localPosition;
-                if (_cross == null) { _showCross(d.localPosition); }
-                _lpCrossStart = _cross;
-              },
-              onLongPressMoveUpdate: (d) {
-                if (_drawing) { return; }
-                final sf = _lpFinger; final sc = _lpCrossStart;
-                if (sf == null || sc == null) { _showCross(d.localPosition); return; }
-                _showCross(sc + (d.localPosition - sf));
-              },
-              onLongPressEnd: (_) { _longPress = false; _lpFinger = null; _lpCrossStart = null; },
               child: CustomPaint(
                 painter: _Painter(
                   candles: _c, vis: _vis, scroll: _scroll, pzoom: _pzoom,
@@ -1037,6 +1068,7 @@ class _CandleChartState extends State<CandleChart> {
                 child: const SizedBox.expand(),
               ),
             ),
+            ),  // Listener
             // OHLCV + 지표 레이블 — 왼쪽 상단
             Positioned(
               left: 4, top: 4,
