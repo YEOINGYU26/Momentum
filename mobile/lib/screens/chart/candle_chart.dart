@@ -523,6 +523,10 @@ class _CandleChartState extends State<CandleChart> {
     if (ln.pts.isNotEmpty) {
       return (tap - px(ln.pts.first)).distance;
     }
+    // Fallback: SharedPreferences에서 복원한 선은 pts=[]이므로
+    // startTime/endTime/startPrice/endPrice 좌표로 히트 테스트
+    final pxPair = _linePixels(ln);
+    if (pxPair != null) return _ptSegDist(tap, pxPair.$1, pxPair.$2);
     return double.infinity;
   }
 
