@@ -289,6 +289,17 @@ class _CandleChartState extends State<CandleChart> {
     }
   }
 
+  // ChartProvider.load()가 비동기 완료된 후 initialLines가 새로 전달될 때 복원
+  @override
+  void didUpdateWidget(CandleChart old) {
+    super.didUpdateWidget(old);
+    if (_lines.isEmpty && widget.initialLines.isNotEmpty) {
+      setState(() {
+        _lines.addAll(widget.initialLines.map(_infoToLine));
+      });
+    }
+  }
+
   /// ChartLineInfo → ChartLine 변환 (색상은 역할 기반)
   static ChartLine _infoToLine(ChartLineInfo info) => ChartLine(
     startTime:   info.startTime,

@@ -508,7 +508,7 @@ class _ChartScreenState extends State<ChartScreen> {
       );
     }
 
-    final savedLines = context.read<ChartProvider>()
+    final savedLines = context.watch<ChartProvider>()
         .getLinesForTicker(_currentTicker);
     return ClipRect(
       child: CandleChart(
