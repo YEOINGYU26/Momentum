@@ -22,6 +22,7 @@ class _ChartScreenState extends State<ChartScreen> {
   String _currentTicker = '005930';
   List<CandleData> _candles = [];
   bool _loading = false;
+  bool _fetchError = false;
   List<SymbolInfo> _suggestions = [];
 
   // 통화 토글
@@ -120,18 +121,20 @@ class _ChartScreenState extends State<ChartScreen> {
 
   Future<void> _fetchCandles() async {
     if (!mounted) return;
-    setState(() { _loading = true; _candles = []; });
+    setState(() { _loading = true; _candles = []; _fetchError = false; });
     _updateStockName(_currentTicker);
     try {
       final candles = _isCrypto
           ? await _fetchUpbitCandles()
           : await _fetchKisCandles();
       if (!mounted) return;
-      setState(() => _candles = candles.isNotEmpty ? candles : _demoCandles());
-    } catch (_) {
-      if (mounted && _candles.isEmpty) {
-        setState(() => _candles = _demoCandles());
+      if (candles.isNotEmpty) {
+        setState(() { _candles = candles; _fetchError = false; });
+      } else {
+        setState(() { _candles = []; _fetchError = true; });
       }
+    } catch (_) {
+      if (mounted) setState(() { _candles = []; _fetchError = true; });
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -214,29 +217,6 @@ class _ChartScreenState extends State<ChartScreen> {
       ));
     }
     return result;
-  }
-
-  List<CandleData> _demoCandles() {
-    final now = DateTime.now();
-    final candles = <CandleData>[];
-    double price = 70000;
-    for (int i = 200; i >= 0; i--) {
-      final t = now.subtract(Duration(days: i));
-      final open = price;
-      price += (i % 3 == 0 ? 1 : -1) * price * 0.015 * (0.5 + (i * 7 % 10) / 10);
-      final close = price;
-      final high = [open, close].reduce((a, b) => a > b ? a : b) * (1 + (i % 5) * 0.002);
-      final low = [open, close].reduce((a, b) => a < b ? a : b) * (1 - (i % 4) * 0.002);
-      candles.add(CandleData(
-        time: t.millisecondsSinceEpoch ~/ 1000,
-        open: open,
-        high: high,
-        low: low,
-        close: close,
-        volume: 500000 + (i * 31337) % 1500000,
-      ));
-    }
-    return candles;
   }
 
   @override
@@ -499,14 +479,28 @@ class _ChartScreenState extends State<ChartScreen> {
             : Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.bar_chart, color: AppColors.gray, size: 48),
+                  Icon(
+                    _fetchError ? Icons.wifi_off_rounded : Icons.bar_chart,
+                    color: AppColors.gray,
+                    size: 48,
+                  ),
                   const SizedBox(height: 12),
-                  const Text('백엔드 서버를 시작하세요',
-                      style: TextStyle(color: AppColors.gray, fontSize: 14)),
-                  const SizedBox(height: 8),
-                  TextButton(
+                  Text(
+                    _fetchError ? '서버에 연결할 수 없습니다' : '차트 데이터가 없습니다',
+                    style: const TextStyle(color: Colors.white70, fontSize: 15),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _fetchError
+                        ? 'uvicorn 서버가 실행 중인지 확인하세요'
+                        : '종목을 검색하거나 다시 시도해 보세요',
+                    style: const TextStyle(color: AppColors.gray, fontSize: 12),
+                  ),
+                  const SizedBox(height: 16),
+                  TextButton.icon(
                     onPressed: _fetchCandles,
-                    child: const Text('다시 시도',
+                    icon: const Icon(Icons.refresh, size: 16, color: AppColors.green),
+                    label: const Text('다시 시도',
                         style: TextStyle(color: AppColors.green)),
                   ),
                 ],

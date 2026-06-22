@@ -85,8 +85,8 @@ class MarketDataService {
     final t = ticker.toUpperCase();
     if (isKoreanStock(t)) return _kisOhlcvRange(t, range);
     if (isCrypto(t)) return _upbitOhlcvRange(_cryptoMarkets[t]!, range);
-    if (isUsTicker(t)) return _kisOhlcvRange(t, range);   // 백엔드가 해외주식 OHLCV 처리
-    return _fakePrices(ticker, 30);
+    if (isUsTicker(t)) return _kisOhlcvRange(t, range);
+    return [];
   }
 
   static Future<List<double>> _kisOhlcvRange(String ticker, String range) async {
@@ -105,16 +105,16 @@ class MarketDataService {
       final res = await http
           .get(Uri.parse('$_backend/api/v1/market/ohlcv/$ticker?interval=$interval'))
           .timeout(const Duration(seconds: 8));
-      if (res.statusCode != 200) return _fakePrices(ticker, 30);
+      if (res.statusCode != 200) return [];
       final List raw = jsonDecode(res.body) as List;
       final closes = raw
           .map((d) => (d['close'] as num?)?.toDouble() ?? 0.0)
           .where((v) => v > 0)
           .toList();
-      if (closes.isEmpty) return _fakePrices(ticker, 30);
+      if (closes.isEmpty) return [];
       return closes.length > maxCount ? closes.sublist(closes.length - maxCount) : closes;
     } catch (_) {
-      return _fakePrices(ticker, 30);
+      return [];
     }
   }
 
@@ -134,7 +134,7 @@ class MarketDataService {
       final res = await http
           .get(Uri.parse('$_upbit/candles/$endpoint?market=$market&count=$count'))
           .timeout(const Duration(seconds: 8));
-      if (res.statusCode != 200) return _fakePrices(market, 30);
+      if (res.statusCode != 200) return [];
       final List data = jsonDecode(res.body);
       return data
           .map<double>((d) => (d['trade_price'] as num).toDouble())
@@ -142,7 +142,7 @@ class MarketDataService {
           .reversed
           .toList();
     } catch (_) {
-      return _fakePrices(market, 30);
+      return [];
     }
   }
 
@@ -163,19 +163,6 @@ class MarketDataService {
     return '$intPart.${parts[1]}';
   }
 
-  // Deterministic fake prices based on ticker hash (for non-supported tickers)
-  static List<double> _fakePrices(String ticker, int count) {
-    final seed = ticker.hashCode.abs() % 1000;
-    double price = 50000.0 + seed * 100;
-    final result = <double>[];
-    for (int i = 0; i < count; i++) {
-      final hash = (ticker.hashCode + i * 31) & 0xFFFFFF;
-      final delta = ((hash % 200) - 98) * price * 0.003;
-      price += delta;
-      result.add(price);
-    }
-    return result;
-  }
 }
 
 class PriceResult {

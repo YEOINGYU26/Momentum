@@ -32,6 +32,7 @@ class MiniChartSheet extends StatefulWidget {
 class _MiniChartSheetState extends State<MiniChartSheet> {
   List<double> _data = [];
   bool _loading = true;
+  bool _error = false;
   String _range = '1년';
 
   static const _ranges = ['일봉', '주봉', '월봉', '1년', '5년', '모두'];
@@ -43,9 +44,15 @@ class _MiniChartSheetState extends State<MiniChartSheet> {
   }
 
   Future<void> _loadChart() async {
-    setState(() => _loading = true);
+    setState(() { _loading = true; _error = false; });
     final data = await MarketDataService.fetchOhlcvRange(widget.ticker, _range);
-    if (mounted) setState(() { _data = data; _loading = false; });
+    if (mounted) {
+      setState(() {
+        _data = data;
+        _loading = false;
+        _error = data.isEmpty;
+      });
+    }
   }
 
   static const _avatarColors = [
@@ -150,8 +157,27 @@ class _MiniChartSheetState extends State<MiniChartSheet> {
             height: 140,
             child: _loading
                 ? const Center(child: CircularProgressIndicator(color: AppColors.green, strokeWidth: 2))
-                : _data.isEmpty
-                    ? const Center(child: Text('차트 데이터 없음', style: TextStyle(color: AppColors.gray)))
+                : _error
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.wifi_off_rounded, color: AppColors.gray, size: 28),
+                            const SizedBox(height: 6),
+                            const Text('서버에 연결할 수 없습니다',
+                                style: TextStyle(color: AppColors.gray, fontSize: 12)),
+                            const SizedBox(height: 4),
+                            GestureDetector(
+                              onTap: _loadChart,
+                              child: const Text('다시 시도',
+                                  style: TextStyle(
+                                      color: AppColors.green,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600)),
+                            ),
+                          ],
+                        ),
+                      )
                     : Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                         child: CustomPaint(
