@@ -2161,35 +2161,51 @@ class _Painter extends CustomPainter {
     final minStp = math.max(1, ((lpw + 8) / math.max(cw, 0.1)).ceil());
     final step   = math.max(minStp, math.max(1, (vc.length / 6).round()));
     final xAxisY = usableH + 4;
-    double lastLabelX = -lpw * 2;
 
-    for (var i = 0; i < vc.length; i += step) {
-      final x = (rp + i + 0.5) * cw;
-      if (x - lastLabelX < lpw + 4) { continue; }
-      tp.text = TextSpan(text: tfmt(vc[i].time),
-          style: const TextStyle(color: AppColors.gray, fontSize: 10));
-      tp.layout();
-      if (x + tp.width / 2 < chartW) {
-        tp.paint(canvas, Offset(x - tp.width / 2, xAxisY));
-        lastLabelX = x;
+    // 장중(intraday) 차트에서 세션 경계 캔들 검출
+    // 연속 간격이 평균의 3배 이상 = 개장/폐장 경계
+    final sessionBounds = <int>{};
+    if (hhmm && vc.length >= 2) {
+      for (int i = 0; i < vc.length; i++) {
+        final gapB = i == 0           ? double.infinity : (vc[i].time - vc[i-1].time).toDouble();
+        final gapA = i == vc.length-1 ? double.infinity : (vc[i+1].time - vc[i].time).toDouble();
+        if (gapB > avgI * 3 || gapA > avgI * 3) sessionBounds.add(i);
       }
     }
 
-    // Future time axis labels (dimmer, skip if overlap with last past label)
+    // 겹침 없는 라벨 드로우 헬퍼
+    final drawnRng = <(double, double)>[];
+    bool fits(double lx, double w) =>
+        drawnRng.every((r) => lx >= r.$2 + 4 || lx + w <= r.$1 - 4);
+
+    void drawTL(double x, int t, Color c) {
+      if (x < 0 || x > chartW) return;
+      tp.text = TextSpan(text: tfmt(t), style: TextStyle(color: c, fontSize: 10));
+      tp.layout();
+      final lx = x - tp.width / 2;
+      if (lx < 0 || lx + tp.width > chartW) return;
+      if (fits(lx, tp.width)) {
+        tp.paint(canvas, Offset(lx, xAxisY));
+        drawnRng.add((lx, lx + tp.width));
+      }
+    }
+
+    // 1순위: 개장/폐장 시각 (밝게)
+    for (final i in sessionBounds.toList()..sort()) {
+      drawTL((rp + i + 0.5) * cw, vc[i].time, Colors.white70);
+    }
+    // 2순위: 일반 스텝 라벨
+    for (var i = 0; i < vc.length; i += step) {
+      if (sessionBounds.contains(i)) continue;
+      drawTL((rp + i + 0.5) * cw, vc[i].time, AppColors.gray);
+    }
+    // 미래 슬롯 라벨
     if (futureSlots > 0) {
       final lastTime = vc.last.time;
       for (var fi = 0; fi < futureSlots; fi += step) {
         final x = (rp + vc.length + fi + 0.5) * cw;
-        if (x > chartW) { break; }
-        if (x - lastLabelX < lpw + 4) { continue; }
-        final futureT = (lastTime + (fi + 1) * avgI).round();
-        tp.text = TextSpan(text: tfmt(futureT),
-            style: const TextStyle(color: Color(0xFF4A5368), fontSize: 10));
-        tp.layout();
-        if (x + tp.width / 2 < chartW) {
-          tp.paint(canvas, Offset(x - tp.width / 2, xAxisY));
-          lastLabelX = x;
-        }
+        if (x > chartW) break;
+        drawTL(x, (lastTime + (fi + 1) * avgI).round(), const Color(0xFF4A5368));
       }
     }
 

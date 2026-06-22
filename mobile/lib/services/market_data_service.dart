@@ -34,11 +34,10 @@ class MarketDataService {
           .timeout(const Duration(seconds: 5));
       if (res.statusCode != 200) return null;
       final o = jsonDecode(res.body) as Map<String, dynamic>;
-      final sign = o['change_sign'] as String? ?? '3';
-      final isUp = sign == '1' || sign == '2';
       final price = (o['current_price'] as num?)?.toDouble() ?? 0.0;
       final change = (o['change'] as num?)?.toDouble() ?? 0.0;
       final rate = (o['change_rate'] as num?)?.toDouble() ?? 0.0;
+      final isUp = change > 0;
       final isUsd = (o['currency'] as String? ?? 'KRW') == 'USD';
       final fmt = isUsd ? _fmtUsd : _fmtNum;
       return PriceResult(

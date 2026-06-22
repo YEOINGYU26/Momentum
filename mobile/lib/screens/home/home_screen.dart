@@ -525,8 +525,8 @@ class _ItemTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(item.price,
-                    style: TextStyle(
-                        color: color, fontSize: 14, fontWeight: FontWeight.w600)),
+                    style: const TextStyle(
+                        color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
                 Text('${item.change}  ${item.pct}',
                     style: TextStyle(
