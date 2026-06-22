@@ -847,7 +847,7 @@ class _CandleChartState extends State<CandleChart> {
 
   Widget _buildLegend(CandleData c) {
     final isUp = c.close >= c.open;
-    final col  = isUp ? AppColors.green : AppColors.red;
+    final col  = isUp ? AppColors.red : AppColors.blue;
     final pfx  = widget.pricePrefix;
     Widget lbl(String k, String v, [Color? vc]) => RichText(text: TextSpan(children: [
       TextSpan(text: '$k ', style: const TextStyle(color: AppColors.gray, fontSize: 10)),
@@ -863,9 +863,9 @@ class _CandleChartState extends State<CandleChart> {
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         lbl('시', _fmtPrice(pfx, c.open)),
         const SizedBox(width: 8),
-        lbl('고', _fmtPrice(pfx, c.high),  AppColors.green),
+        lbl('고', _fmtPrice(pfx, c.high),  AppColors.red),
         const SizedBox(width: 8),
-        lbl('저', _fmtPrice(pfx, c.low),   AppColors.red),
+        lbl('저', _fmtPrice(pfx, c.low),   AppColors.blue),
         const SizedBox(width: 8),
         lbl('종', _fmtPrice(pfx, c.close), col),
         const SizedBox(width: 8),
@@ -1033,25 +1033,28 @@ class _CandleChartState extends State<CandleChart> {
                 child: const SizedBox.expand(),
               ),
             ),
-            // OHLCV legend overlay (top-right)
-            if (_crossCandle != null)
-              Positioned(
-                right: _axisW + 4, top: 4,
-                child: _buildLegend(_crossCandle!),
-              ),
-            // Indicator labels (tappable)
-            if (_activeIndicators.isNotEmpty)
-              Positioned(
-                left: 7, top: 4,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    for (final meta in _kIndicators
-                        .where((m) => _activeIndicators.contains(m.type)))
-                      _buildIndLabel(meta),
+            // OHLCV + 지표 레이블 — 왼쪽 상단
+            Positioned(
+              left: 4, top: 4,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_crossCandle != null) ...[
+                    _buildLegend(_crossCandle!),
+                    if (_activeIndicators.isNotEmpty) const SizedBox(height: 4),
                   ],
-                ),
+                  if (_activeIndicators.isNotEmpty)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final meta in _kIndicators
+                            .where((m) => _activeIndicators.contains(m.type)))
+                          _buildIndLabel(meta),
+                      ],
+                    ),
+                ],
               ),
+            ),
             // Floating selection toolbar
             if (_selVisible)
               Positioned(
